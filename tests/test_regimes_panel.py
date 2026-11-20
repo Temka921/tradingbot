@@ -133,3 +133,66 @@ def test_build_panel_holdout_flag_passthrough():
     out = panel.build_panel("stock", allow_holdout=True)
     assert out["date"].max() >= pd.Timestamp(config.HOLDOUT_START)
     assert (config.DATA_DIR / "holdout_log.txt").exists()
+
+
+def _stock_setup(extra=()):
+    store.save_bars("SPY", "stock", rand_bars(1500, seed=1, start="2016-01-01"))
+    store.save_bars("AAA", "stock", rand_bars(1500, seed=2, start="2016-01-01"))
+    rows = [("SPY", "stock", "broad", "etf", True, False),
+            ("AAA", "stock", "Tech", "large", False, False)]
+    _meta(rows + list(extra))
+
+
+def test_corrupt_asset_skipped(capsys):
+    _stock_setup([("BAD", "stock", "Tech", "large", False, False)])
+    (config.DATA_DIR / "raw" / "stock" / "BAD.parquet").write_bytes(b"not a parquet")
+    out = panel.build_panel("stock")
+    assert set(out["asset"]) == {"SPY", "AAA"}
+    assert "SKIP BAD:" in capsys.readouterr().out
+
+
+def test_failing_signal_asset_skipped(capsys, monkeypatch):
+    _stock_setup()
+    real = panel.compute_signals
+
+    def boom(df):
+        if len(df) == 777:
+            raise RuntimeError("boom")
+        return real(df)
+
+    store.save_bars("ZZZ", "stock", rand_bars(777, seed=5, start="2016-01-01"))
+    _meta([("SPY", "stock", "broad", "etf", True, False),
+           ("AAA", "stock", "Tech", "large", False, False),
+           ("ZZZ", "stock", "Tech", "large", False, False)])
+    monkeypatch.setattr(panel, "compute_signals", boom)
+    out = panel.build_panel("stock")
+    assert set(out["asset"]) == {"SPY", "AAA"}
+    assert "SKIP ZZZ: RuntimeError: boom" in capsys.readouterr().out
+
+
+def test_all_pre_asset_ok(capsys):
+    _stock_setup([("OLD", "stock", "Tech", "large", False, False)])
+    store.save_bars("OLD", "stock", rand_bars(200, seed=7, start="1990-01-01"))
+    out = panel.build_panel("stock")
+    assert set(out["asset"]) == {"SPY", "AAA"}
+    assert "SKIP OLD" in capsys.readouterr().out
+
+
+def test_empty_meta_raises():
+    _meta([])
+    with pytest.raises(ValueError, match="stock"):
+        panel.build_panel("stock")
+
+
+def test_holdout_log_one_entry_per_asset():
+    _stock_setup()
+    panel.build_panel("stock", allow_holdout=True)
+    lines = (config.DATA_DIR / "holdout_log.txt").read_text().splitlines()
+    assert len(lines) == 2
+    assert {l.split()[-1] for l in lines} == {"stock/SPY", "stock/AAA"}
+
+
+def test_outcomes_float32():
+    _stock_setup()
+    out = panel.build_panel("stock")
+    assert out["ret_long_10"].dtype == "float32"

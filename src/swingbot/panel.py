@@ -36,34 +36,52 @@ def build_panel(market: str, allow_holdout: bool = False) -> pd.DataFrame:
     bench_sym = config.BENCHMARK[market]
     if bench_sym not in set(meta["symbol"]):
         raise ValueError(f"benchmark {bench_sym} missing from {market} data")
-    bench = store.load_bars(bench_sym, market, allow_holdout=allow_holdout)
 
-    closes = pd.DataFrame({
-        s: store.load_bars(s, market, allow_holdout=allow_holdout)["close"] for s in meta["symbol"]
-    })
+    # Load every asset exactly once (one holdout-log entry per asset).
+    bars: dict[str, pd.DataFrame] = {}
+    for sym in meta["symbol"]:
+        try:
+            bars[sym] = store.load_bars(sym, market, allow_holdout=allow_holdout)
+        except Exception as e:  # corrupt/unreadable file
+            if sym == bench_sym:
+                raise
+            _skip(sym, f"{type(e).__name__}: {e}")
+    bench = bars[bench_sym]
+
+    closes = pd.DataFrame({s: d["close"] for s, d in bars.items()})
     xs = cross_sectional_signals(closes)  # once per market, this market's closes only
     del closes
 
     parts = []
     for r in meta.itertuples():
-        df = store.load_bars(r.symbol, market, allow_holdout=allow_holdout)
-        sig = compute_signals(df)
-        for name, frame in xs.items():
-            sig[name] = frame[r.symbol].reindex(df.index).fillna(False).astype(bool)
-        part = pd.concat([sig, compute_outcomes(df, bench, market), label_regimes(df, bench)], axis=1)
-        part.insert(0, "asset", r.symbol)
-        for col in META_COLS:
-            part[col] = getattr(r, col)
-        part["market"] = market
-        part["split"] = store.split_of(df.index, market)
-        part = part[part["split"] != "pre"]
-        parts.append(part.reset_index())  # 'date' index -> column
+        if r.symbol not in bars:
+            continue
+        df = bars.pop(r.symbol)
+        try:
+            sig = compute_signals(df)
+            for name, frame in xs.items():
+                sig[name] = frame[r.symbol].reindex(df.index, fill_value=False).astype(bool)
+            part = pd.concat([sig, compute_outcomes(df, bench, market), label_regimes(df, bench)], axis=1)
+            part.insert(0, "asset", r.symbol)
+            for col in META_COLS:
+                part[col] = getattr(r, col)
+            part["market"] = market
+            part["split"] = store.split_of(df.index, market)
+            part = part[part["split"] != "pre"]
+            if part.empty:
+                _skip(r.symbol, "no rows after dropping pre-period")
+                continue
+            f64 = part.select_dtypes("float64").columns
+            part[f64] = part[f64].astype("float32")
+            parts.append(part.reset_index())  # 'date' index -> column
+        except Exception as e:
+            _skip(r.symbol, f"{type(e).__name__}: {e}")
+    if not parts:
+        raise ValueError(f"no assets could be built for market {market!r}")
     out = pd.concat(parts, ignore_index=True)
+    del parts
     cols = ["date", "asset"] + [c for c in out.columns if c not in ("date", "asset")]
     out = out[cols]
     for c in CATEGORICAL:
         out[c] = out[c].astype("category")
     return out
-
-
-

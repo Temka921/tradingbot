@@ -10,7 +10,7 @@ import plotly.graph_objects as go
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from swingbot import config
-from swingbot.analysis.solo import solo_table
+from swingbot.analysis.solo import clip_bounds, clip_values, solo_table
 from swingbot.signals import SIGNAL_INFO
 
 CDN_URL = "https://cdn.plot.ly/plotly-2.35.2.min.js"
@@ -20,13 +20,29 @@ CAVEAT = ("Discovery split only. Survivorship bias: delisted stocks and some del
 CAVEAT_EXTRA = ("p-values test the edge versus the same-day average of all assets in the same market "
                 "(signal included), using date-clustered HAC errors with conservative effective degrees "
                 "of freedom; q-values correct for multiple testing within each table only.")
+SURVIVORSHIP = (
+    "Survivorship is large, not a footnote. The stock universe is today's S&P 500/400 constituents, so "
+    "historical returns are inflated and dip-buying signals are favoured: stocks that fell and kept falling "
+    "were dropped from the indexes and are missing here. The all-rows mean excess over SPY for the stock "
+    "universe (ETFs excluded) in discovery is {stock_mean} (date-weighted, after clipping); that is mostly "
+    "survivorship, not skill. The crypto universe is today's top coins by trading volume and excludes coins "
+    "listed after 2024: selection on later success.")
+ETF_NOTE = ("ETFs (SPY included) are excluded from the stock leaderboard, heatmaps and sector tables, and from "
+            "their same-day baseline. This control runs the same test on ETFs only. ETFs have no constituent "
+            "survivorship (a fund does not drop its losers from history the way today's index list does), so a "
+            "dip-buying edge that also shows up here is more credible than one that appears only on stocks.")
+DUP_NOTE = ("<code>bb_lower_close</code> and <code>zscore_below_2</code> are the same test: close below the "
+            "20-day mean minus 2 standard deviations. They fire on the same rows and give identical statistics; "
+            "count them once.")
 SEGMENT_KEY = {"stock": "sector", "crypto": "cap_bucket"}
 _TEMPLATES = Path(__file__).parent / "templates"
 
-STAT_FIELDS = {"mean_all", "edge_vs_all_days", "t", "p", "q", "hit_rate", "profit_factor", "occ_per_year"}
+STAT_FIELDS = {"mean_all", "mean_solo", "edge_vs_all_days", "t", "p", "q", "hit_rate", "profit_factor",
+               "occ_per_year"}
 LEADER_COLS = [
     ("signal", "Signal"), ("family", "Family"), ("direction", "Dir"), ("verdict", "Verdict"), ("n_all", "n"),
     ("n_solo", "n solo"), ("n_dates", "Dates"), ("mean_all", "Mean excess (date-weighted, bps)"),
+    ("mean_solo", "Mean excess solo (date-weighted, bps)"),
     ("edge_vs_all_days", "Edge vs same-day avg (bps)"), ("t", "t"), ("p", "p"),
     ("q", "q (BH, this table)"), ("hit_rate", "Hit rate"), ("profit_factor", "Profit factor"),
     ("occ_per_year", "Occurrences / yr"),
@@ -112,19 +128,34 @@ def _rows(t: pd.DataFrame, cols: list[tuple[str, str]], blank_insufficient: bool
     return out
 
 
-def heatmap_matrix(table: pd.DataFrame, regime_col: str) -> pd.DataFrame:
-    """signal x (market | regime) matrix of edge_vs_all_days in bps; insufficient cells are NaN."""
+def heatmap_matrix(table: pd.DataFrame, regime_col: str, significant_only: bool = False) -> pd.DataFrame:
+    """signal x (market | regime) matrix of edge_vs_all_days in bps; insufficient cells are NaN.
+
+    With ``significant_only`` cells with q >= SIG_Q (or NaN q) are NaN too.
+    """
     t = table.copy()
-    t["edge_bps"] = np.where(t["insufficient"], np.nan, t["edge_vs_all_days"] * 1e4)
+    blank = t["insufficient"].to_numpy(dtype=bool)
+    if significant_only:
+        blank = blank | ~(t["q"].to_numpy(dtype="float64") < SIG_Q)
+    t["edge_bps"] = np.where(blank, np.nan, t["edge_vs_all_days"] * 1e4)
     t["col"] = t["market"].astype(str) + " | " + t[regime_col].astype(str)
     m = t.pivot_table(index="signal", columns="col", values="edge_bps", aggfunc="first", dropna=False)
     return m.reindex(list(SIGNAL_INFO)).sort_index(axis=1)
+
+
+def _json_z(a: np.ndarray) -> list[list[float | None]]:
+    """Plain nested lists (None for NaN) so the rendered figure JSON is readable."""
+    return [[None if np.isnan(x) else float(x) for x in row] for row in a]
 
 
 def _heatmap_html(tables: list[pd.DataFrame], regime_col: str, title: str) -> str:
     full = pd.concat(tables, ignore_index=True)
     full["col"] = full["market"].astype(str) + " | " + full[regime_col].astype(str)
     z = heatmap_matrix(full, regime_col)
+    z_sig = heatmap_matrix(full, regime_col, significant_only=True).reindex(index=z.index, columns=z.columns)
+    all_z = z.to_numpy(dtype=float)
+    sig_z = z_sig.to_numpy(dtype=float)
+    grey_z = np.where(~np.isnan(all_z) & np.isnan(sig_z), 0.0, np.nan)
     idx = full.set_index(["signal", "col"])
     text = []
     for s in z.index:
@@ -135,28 +166,58 @@ def _heatmap_html(tables: list[pd.DataFrame], regime_col: str, title: str) -> st
                 if r.insufficient:
                     row.append(f"{s}<br>{c}<br>insufficient data (n={int(r.n_all)}, dates={int(r.n_dates)})")
                 else:
+                    tag = "" if r.q < SIG_Q else "<br>not significant (q ≥ 0.10)"
                     row.append(f"{s}<br>{c}<br>n={int(r.n_all)}, dates={int(r.n_dates)}<br>"
-                               f"mean excess={_bps(r.mean_all)} bps<br>t={_fmt('t', r.t)}, q={_fmt('q', r.q)}")
+                               f"edge={_bps(r.edge_vs_all_days)} bps, mean excess={_bps(r.mean_all)} bps<br>"
+                               f"t={_fmt('t', r.t)}, q={_fmt('q', r.q)}{tag}")
             except KeyError:
                 row.append(f"{s}<br>{c}<br>no rows")
         text.append(row)
-    fig = go.Figure(go.Heatmap(
-        z=z.to_numpy(dtype=float), x=list(z.columns), y=list(z.index), text=text,
-        hovertemplate="%{text}<extra></extra>", colorscale="RdBu", zmid=0,
-        colorbar={"title": "Edge (bps)"}))
+    common = {"x": list(z.columns), "y": list(z.index), "text": text, "hoverongaps": False,
+              "hovertemplate": "%{text}<extra></extra>"}
+    fig = go.Figure([
+        go.Heatmap(z=_json_z(grey_z), name="not significant", showscale=False,
+                   colorscale=[[0, "#c9cdd3"], [1, "#c9cdd3"]], **common),
+        go.Heatmap(z=_json_z(sig_z), name="significant", colorscale="RdBu", zmid=0,
+                   colorbar={"title": "Edge (bps)"}, **common),
+    ])
     fig.update_layout(title=title, height=max(400, 22 * len(z) + 160), margin={"l": 170, "r": 20, "t": 50, "b": 80},
                       yaxis={"autorange": "reversed"}, xaxis={"tickangle": -30})
     return fig.to_html(full_html=False, include_plotlyjs=False, config={"responsive": True})
 
 
 def _quality_count(quality: pd.DataFrame | None, symbols: set[str], market: str) -> int | None:
-    """Quality-issue rows for this market's assets (market column filter where populated)."""
+    """Distinct assets of this market with a non-empty quality issue (market filter where populated)."""
     if quality is None or "symbol" not in quality:
         return None
     q = quality
     if "market" in q:
         q = q[q["market"].isna() | (q["market"] == market)]
-    return int(q["symbol"].isin(symbols).sum())
+    if "issues" in q:
+        q = q[q["issues"].fillna("").astype(str).str.strip() != ""]
+    return int(q.loc[q["symbol"].isin(symbols), "symbol"].nunique())
+
+
+def _etf_mask(panel: pd.DataFrame) -> np.ndarray:
+    if "is_etf" not in panel:
+        return np.zeros(len(panel), dtype=bool)
+    return panel["is_etf"].astype("boolean").fillna(False).to_numpy(dtype=bool)
+
+
+def _pct_range(b: tuple[float, float]) -> str:
+    lo, hi = b
+    return "n/a" if np.isnan(lo) else f"{lo * 100:.2f}% to {hi * 100:.2f}%"
+
+
+def universe_mean_excess(panel: pd.DataFrame, horizon: int) -> float:
+    """Date-weighted mean of excess_long_h over every discovery row (clipped as in solo_table)."""
+    disc = panel[(panel["split"] == "discovery").to_numpy()]
+    v = disc[f"excess_long_{horizon}"].to_numpy(dtype="float64")
+    v = clip_values(v, clip_bounds(v))
+    ok = ~np.isnan(v)
+    if not ok.any():
+        return np.nan
+    return float(pd.Series(v[ok]).groupby(disc["date"].to_numpy()[ok]).mean().mean())
 
 
 def build_report(panels: dict[str, pd.DataFrame], out_path: Path, horizon: int = 10,
@@ -171,24 +232,40 @@ def build_report(panels: dict[str, pd.DataFrame], out_path: Path, horizon: int =
     def save(name: str, df: pd.DataFrame) -> None:
         df.to_csv(out_path.parent / f"solo_{name}_{stamp}.csv", index=False)
 
-    coverage, leaders, tr_tabs, vol_tabs, segments = [], [], [], [], []
+    coverage, leaders, controls, tr_tabs, vol_tabs, segments = [], [], [], [], [], []
+    stock_mean = "not computed (no stock panel)"
     for market, panel in panels.items():
         found = sorted(map(str, panel["market"].dropna().unique()))
         if found != [market]:
             raise ValueError(f"panel for market {market!r} must contain only that market; found {found}")
+        etf = _etf_mask(panel)
+        etf_panel = panel[etf]
+        panel = panel[~etf]  # ETFs stay out of the leaderboard, heatmaps, segments and their baseline
         disc = panel[panel["split"] == "discovery"]
         syms = set(panel["asset"].astype(str).unique())
-        qn = _quality_count(quality, syms, market)
+        etf_syms = set(etf_panel["asset"].astype(str).unique())
+        qn = _quality_count(quality, syms | etf_syms, market)
+
+        lb_raw = solo_table(panel, horizon=horizon)
+        clip = lb_raw.attrs.get("clip_bounds", {})
+        lb = sort_leaderboard(lb_raw)
+        save(f"leaderboard_{market}", lb)
+        leaders.append({"market": market, "rows": _rows(lb, LEADER_COLS), "counts": verdict_counts(lb)})
+        if market == "stock":
+            x = universe_mean_excess(panel, horizon)
+            stock_mean = "n/a" if np.isnan(x) else f"{x * 1e4:+.1f} bps per {horizon} days"
         coverage.append({
-            "market": market, "assets": len(syms), "rows": len(panel),
+            "market": market, "assets": len(syms), "etfs": len(etf_syms), "rows": len(panel),
             "start": str(pd.to_datetime(panel["date"]).min().date()),
             "end": str(pd.to_datetime(panel["date"]).max().date()),
-            "disc_rows": len(disc), "issues": "n/a" if qn is None else qn})
+            "disc_rows": len(disc), "issues": "n/a" if qn is None else qn,
+            "clip": "; ".join(f"{k}: {_pct_range(b)}" for k, b in clip.items())})
 
-        lb = sort_leaderboard(solo_table(panel, horizon=horizon))
-        save(f"leaderboard_{market}", lb)
-        leaders.append({"market": market, "rows": _rows(lb, LEADER_COLS),
-                        "counts": verdict_counts(lb)})
+        if market == "stock" and len(etf_panel):
+            ctl = sort_leaderboard(solo_table(etf_panel, horizon=horizon))
+            save(f"etf_control_{market}", ctl)
+            controls.append({"market": market, "rows": _rows(ctl, LEADER_COLS), "counts": verdict_counts(ctl),
+                             "assets": len(etf_syms)})
 
         tr = solo_table(panel, horizon=horizon, group_by=["market", "trend_regime"])
         vo = solo_table(panel, horizon=horizon, group_by=["market", "vol_regime"])
@@ -207,8 +284,9 @@ def build_report(panels: dict[str, pd.DataFrame], out_path: Path, horizon: int =
 
     env = Environment(loader=FileSystemLoader(_TEMPLATES), autoescape=select_autoescape(["j2", "html"]))
     page = env.get_template("report.html.j2").render(
-        caveat=CAVEAT, caveat_extra=CAVEAT_EXTRA, cdn=CDN_URL, horizon=horizon, stamp=stamp,
-        coverage=coverage, leaders=leaders, headers=[h for _, h in LEADER_COLS],
+        caveat=CAVEAT, survivorship=SURVIVORSHIP.format(stock_mean=stock_mean), caveat_extra=CAVEAT_EXTRA,
+        cdn=CDN_URL, horizon=horizon, stamp=stamp, coverage=coverage, leaders=leaders, controls=controls,
+        etf_note=ETF_NOTE, dup_note=DUP_NOTE, headers=[h for _, h in LEADER_COLS],
         heat_trend=_heatmap_html(tr_tabs, "trend_regime", "Edge vs same-day avg (bps) by trend regime"),
         heat_vol=_heatmap_html(vol_tabs, "vol_regime", "Edge vs same-day avg (bps) by volatility regime"),
         segments=segments)

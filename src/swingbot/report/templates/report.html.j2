@@ -18,7 +18,9 @@
 <h1>Swing research report: solo signals (horizon {{ horizon }} days)</h1>
 <p>Generated {{ stamp }}. Research tool only; not trading or investment advice.</p>
 
-<div class="caveat"><strong>Caveats.</strong> {{ caveat }} {{ caveat_extra }}</div>
+<div class="caveat"><strong>Caveats.</strong> {{ caveat }}
+<p>{{ survivorship }}</p>
+<p>{{ caveat_extra }}</p></div>
 
 <div class="how"><strong>How to read this.</strong>
 <ul>
@@ -30,21 +32,31 @@
 </ul></div>
 
 <h2>1. Data coverage</h2>
-<div class="scroll"><table><tr><th>Market</th><th>Assets</th><th>Rows</th><th>Discovery rows</th><th>First date</th><th>Last date</th><th>Quality issues</th></tr>
-{% for c in coverage %}<tr><td>{{ c.market }}</td><td>{{ c.assets }}</td><td>{{ c.rows }}</td><td>{{ c.disc_rows }}</td><td>{{ c.start }}</td><td>{{ c.end }}</td><td>{{ c.issues }}</td></tr>
+<p>Assets and rows exclude ETFs (counted separately). Quality issues = distinct assets with at least one flagged data issue. Clip bounds: before any statistic, each outcome is clipped at the 0.1 and 99.9 percentiles pooled over that market's discovery rows (signal rows and baseline alike), so one bad data splice cannot dominate a day's mean. Stock rows with a close below $1 are dropped when the panel is built.</p>
+<div class="scroll"><table><tr><th>Market</th><th>Assets (ex-ETF)</th><th>ETFs</th><th>Rows (ex-ETF)</th><th>Discovery rows</th><th>First date</th><th>Last date</th><th>Quality issues</th><th>Clip bounds ({{ horizon }}-day outcome)</th></tr>
+{% for c in coverage %}<tr><td>{{ c.market }}</td><td>{{ c.assets }}</td><td>{{ c.etfs }}</td><td>{{ c.rows }}</td><td>{{ c.disc_rows }}</td><td>{{ c.start }}</td><td>{{ c.end }}</td><td>{{ c.issues }}</td><td>{{ c.clip }}</td></tr>
 {% endfor %}</table></div>
 
-<h2>2. Solo leaderboard per market</h2>
-<p>Sorted by verdict (candidate, avoid, loses net of costs, not significant, insufficient), then q ascending, then edge descending. Grey rows are insufficient.</p>
+<h2>2. Signal leaderboard (all firings) per market</h2>
+<p>Statistics use every firing of the signal (n). "n solo" and "Mean excess solo" cover only firings where no signal of another family fired; no separate test is run on them. Sorted by verdict (candidate, avoid, loses net of costs, not significant, insufficient), then q ascending, then edge descending. Grey rows are insufficient.</p>
 {% for l in leaders %}
 <h3>{{ l.market }}: {% for v, n in l.counts.items() %}{{ v }}: {{ n }}{% if not loop.last %} · {% endif %}{% endfor %}</h3>
 <div class="scroll"><table><tr>{% for h in headers %}<th>{{ h }}</th>{% endfor %}</tr>
 {% for r in l.rows %}<tr{% if r.insufficient %} class="insuf"{% endif %}>{% for c in r.cells %}<td>{{ c }}</td>{% endfor %}</tr>
 {% endfor %}</table></div>
 {% endfor %}
+<p class="note">Note: {{ dup_note|safe }}</p>
+
+{% for l in controls %}
+<h3>ETF-only control ({{ l.market }}, {{ l.assets }} ETFs): {% for v, n in l.counts.items() %}{{ v }}: {{ n }}{% if not loop.last %} · {% endif %}{% endfor %}</h3>
+<p>{{ etf_note }}</p>
+<div class="scroll"><table><tr>{% for h in headers %}<th>{{ h }}</th>{% endfor %}</tr>
+{% for r in l.rows %}<tr{% if r.insufficient %} class="insuf"{% endif %}>{% for c in r.cells %}<td>{{ c }}</td>{% endfor %}</tr>
+{% endfor %}</table></div>
+{% endfor %}
 
 <h2>3. Heatmaps: edge vs same-day average (bps)</h2>
-<p>Cell colour is the edge tested by p/q, not the raw mean. Hover shows n, dates, mean excess, t and q. Insufficient cells are blank.</p>
+<p>Blue = signal beats same-day average, red = trails; grey = not significant (q ≥ 0.10); blank = insufficient data. BH correction is per heatmap. Cell colour is the edge tested by p/q, not the raw mean; hover shows n, dates, edge, mean excess, t and q.</p>
 <div class="plot">{{ heat_trend|safe }}</div>
 <div class="plot">{{ heat_vol|safe }}</div>
 

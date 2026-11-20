@@ -160,7 +160,8 @@ def test_mixed_market_panel_rejected(tmp_path):
 
 
 def test_quality_count_filters_market():
-    q = pd.DataFrame({"symbol": ["A", "A", "B"], "market": ["stock", "crypto", None]})
+    q = pd.DataFrame({"symbol": ["A", "A", "B"], "market": ["stock", "crypto", None],
+                      "issues": ["gap", "gap", "gap"]})
     assert _quality_count(q, {"A", "B"}, "stock") == 2
     assert _quality_count(q, {"A", "B"}, "crypto") == 2
     assert _quality_count(None, {"A"}, "stock") is None
@@ -188,6 +189,109 @@ def test_rendered_verdicts_not_counted_as_hits(tmp_path):
     assert re.search(r"candidate: \d+", html)
     assert "cost-neutral" in html
     assert lb.iloc[0]["verdict"] in ("candidate", "significant negative edge (avoid)")
+
+
+def _etf_panel(seed=1):
+    p = make_market_panel("stock", seed=seed)
+    p["is_etf"] = p["asset"] == "A3"
+    return p
+
+
+def test_etf_excluded_and_control_table(tmp_path):
+    p = _etf_panel()
+    html = build_report({"stock": p}, tmp_path / "r.html", as_of="2026-01-01").read_text(encoding="utf-8")
+    sig = list(SIGNAL_INFO)[1]
+    exp_stock = int((p[sig] & ~p["is_etf"]).sum())
+    exp_etf = int((p[sig] & p["is_etf"]).sum())
+    lb = pd.read_csv(tmp_path / "solo_leaderboard_stock_2026-01-01.csv").set_index("signal")
+    etf = pd.read_csv(tmp_path / "solo_etf_control_stock_2026-01-01.csv").set_index("signal")
+    assert lb.loc[sig, "n_all"] == exp_stock
+    assert etf.loc[sig, "n_all"] == exp_etf
+    assert "verdict" in etf.columns
+    for name in ("heatmap_trend", "heatmap_vol", "segment"):
+        t = pd.read_csv(tmp_path / f"solo_{name}_stock_2026-01-01.csv")
+        assert t.loc[t.signal == sig, "n_all"].sum() == exp_stock
+    assert "ETF-only control" in html and "no constituent survivorship" in html
+
+
+def test_survivorship_caveat_number(tmp_path):
+    from swingbot.analysis.solo import clip_bounds, clip_values
+    from swingbot.report.build import CAVEAT_EXTRA
+    p = _etf_panel()
+    p["excess_long_10"] = (p["excess_long_10"] + 0.0035).astype("float32")
+    html = build_report({"stock": p}, tmp_path / "r.html", as_of="2026-01-01").read_text(encoding="utf-8")
+    s = p[~p["is_etf"] & (p["split"] == "discovery")]
+    v = s["excess_long_10"].to_numpy(dtype="float64")
+    v = clip_values(v, clip_bounds(v))
+    x = pd.Series(v).groupby(s["date"].to_numpy()).mean().mean() * 1e4
+    txt = f"{x:+.1f} bps per 10 days"
+    assert txt in html
+    i_cav, i_surv, i_extra = html.index(CAVEAT), html.index(txt), html.index(CAVEAT_EXTRA)
+    assert i_cav < i_surv < i_extra
+    assert "S&amp;P 500/400 constituents" in html and "dip-buying" in html
+    assert "top" in html and "selection on later success" in html
+
+
+def _plotly_traces(html: str) -> list[list[dict]]:
+    import json
+    out, pos = [], 0
+    while (i := html.find("Plotly.newPlot(", pos)) >= 0:
+        j = html.index("[", i)
+        data, _ = json.JSONDecoder().raw_decode(html[j:])
+        out.append(data)
+        pos = j
+    return out
+
+
+def test_heatmap_grey_for_not_significant(tmp_path):
+    # 6 assets so every regime cell has several assets per date (else d = 0 and p is NaN)
+    p = make_market_panel("stock", n_dates=600, assets=tuple(f"A{i}" for i in range(6)), seed=4)
+    strong = list(SIGNAL_INFO)[1]
+    col = f"excess_{SIGNAL_INFO[strong][1]}_10"
+    p[col] = p[col].astype("float64")
+    p.loc[p[strong], col] += 0.03
+    html = build_report({"stock": p}, tmp_path / "r.html", as_of="2026-01-01").read_text(encoding="utf-8")
+    assert ("Blue = signal beats same-day average, red = trails; grey = not significant (q ≥ 0.10); "
+            "blank = insufficient data. BH correction is per heatmap.") in html
+    figs = _plotly_traces(html)
+    assert len(figs) == 2
+    for traces in figs:
+        by = {t["name"]: t for t in traces}
+        sig, grey = by["significant"], by["not significant"]
+        ys = sig["y"]
+        r = ys.index(strong)
+        assert all(v is not None for v in sig["z"][r]) and all(v is None for v in grey["z"][r])
+        n_grey = 0
+        for zs, zg in zip(sig["z"], grey["z"]):
+            for a, b in zip(zs, zg):
+                assert a is None or b is None          # never both
+                n_grey += b is not None
+        assert n_grey > 0
+        # not-significant hover still shows the values
+        assert any("not significant" in t and "mean excess" in t for row in grey["text"] for t in row)
+    tbl = pd.read_csv(tmp_path / "solo_heatmap_trend_stock_2026-01-01.csv")
+    ok = tbl[~tbl.insufficient]
+    assert ((ok.q < 0.10).sum() > 0) and ((ok.q >= 0.10).sum() > 0)
+
+
+def test_leaderboard_labels_notes_and_clip_bounds(tmp_path):
+    from swingbot.analysis.solo import clip_bounds
+    panels, out = _render(tmp_path)
+    html = out.read_text(encoding="utf-8")
+    assert "Signal leaderboard (all firings)" in html and "Solo leaderboard" not in html
+    assert "Mean excess solo (date-weighted, bps)" in html and "n solo" in html
+    assert re.search(r"bb_lower_close</code> and <code>zscore_below_2</code> are the same test", html)
+    assert "Clip bounds" in html
+    lo, hi = clip_bounds(panels["crypto"]["excess_long_10"].to_numpy(dtype="float64"))
+    assert f"{lo * 100:.2f}% to {hi * 100:.2f}%" in html
+
+
+def test_quality_count_only_nonempty_issues_deduped():
+    q = pd.DataFrame({"symbol": ["A", "A", "B", "C", "D"],
+                      "issues": ["gap", "gap", np.nan, "gap", ""],
+                      "market": ["stock", np.nan, "stock", "crypto", "stock"]})
+    assert _quality_count(q, {"A", "B", "C", "D"}, "stock") == 1
+    assert _quality_count(q, {"A", "B", "C", "D"}, "crypto") == 2
 
 
 def test_analyze_script_missing_market(tmp_path, monkeypatch, capsys):

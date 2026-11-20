@@ -224,8 +224,10 @@ def test_crypto_universe_exclusions_and_order(monkeypatch, tmp_path):
     monkeypatch.setattr(universe, "UNIVERSE_DIR", tmp_path)
     bad = ["USD1", "RLUSD", "XUSD", "RWUSD", "U", "WBTC", "PAXG", "XAUT", "NVDAB", "TQQQB", "QQQB",
            "MUB", "牛来", "ETHDOWN", "BNBBULL"]
+    listed = {"ETH", "BNB", "BTC", "SOL", "YB"}
     good = [("ETHUSDT", 50), ("BTCUSDT", 10), ("BNBUSDT", 30), ("YBUSDT", 20), ("SOLUSDT", 40)]
     tickers = [_tick(b + "USDT", 1e12) for b in bad] + [_tick(s, v) for s, v in good]
+    assert listed
     tickers += [_tick("ETHBTC", 1e12), _tick("BTCEUR", 1e12), _tick("BTCUSDC", 1e12)]
     monkeypatch.setattr(universe.requests, "get", lambda *a, **k: FakeResp(tickers))
     out = universe.crypto_universe(60)
@@ -254,9 +256,20 @@ def test_crypto_universe_top_n_and_cache(monkeypatch, tmp_path):
 def test_committed_crypto_cache_is_clean():
     cache = universe._read_cache(Path(__file__).resolve().parents[1] / "universe" / "crypto.csv")
     assert len(cache) == 60 and cache[0].symbol == "BTCUSDT"
+    listed = {a.symbol[:-4] for a in cache}
     for a in cache:
         assert a.symbol.endswith("USDT")
-        assert not universe.excluded_crypto_base(a.symbol[:-4]), a.symbol
+        assert not universe.excluded_crypto_base(a.symbol[:-4], listed), a.symbol
+
+
+def test_real_coins_ending_in_b_up_down_kept(monkeypatch, tmp_path):
+    monkeypatch.setattr(universe, "UNIVERSE_DIR", tmp_path)
+    t = [_tick(s + "USDT", v) for s, v in [("ARB", 9), ("SHIB", 8), ("BNB", 7), ("TRB", 6), ("JUP", 5),
+                                           ("SYRUP", 4), ("BTC", 3), ("BTCUP", 2), ("BTCDOWN", 1),
+                                           ("NVDAB", 99), ("TQQQB", 98)]]
+    monkeypatch.setattr(universe.requests, "get", lambda *a, **k: FakeResp(t))
+    got = [a.symbol for a in universe.crypto_universe(60)]
+    assert got == ["ARBUSDT", "SHIBUSDT", "BNBUSDT", "TRBUSDT", "JUPUSDT", "SYRUPUSDT", "BTCUSDT"]
 
 
 def test_yahoo_ticker():

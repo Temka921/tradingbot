@@ -16,10 +16,21 @@ STABLE_BASES = {"USDC", "FDUSD", "TUSD", "DAI", "USDP", "BUSD", "EUR", "USDE",
                 "USD1", "PYUSD", "RLUSD", "USDS", "XUSD", "RWUSD", "U"}
 # Non-core exclusions: wrapped/duplicate BTC and tokenized gold (not independent crypto assets).
 WRAPPED_OR_COMMODITY_BASES = {"WBTC", "PAXG", "XAUT"}
-# Binance tokenized stocks/ETFs trade as <TICKER>B (NVDAB, QQQB, TQQQB, ...). Rule: base of
-# length >= 3 ending in "B" is excluded, except real coins in REAL_B_BASES (BNB). A new real
-# coin ending in B would be wrongly excluded; the cache is committed so this is reviewable.
-REAL_B_BASES = {"BNB"}
+# Binance tokenized stocks/ETFs trade as <TICKER>B. A suffix heuristic would drop real coins
+# (ARB, SHIB, BNB, TRB...), so this is an EXPLICIT list taken from Binance live USDT pairs
+# (2026-11); new tokenized listings must be added here. Real B-ending coins are never listed.
+TOKENIZED_EQUITY_BASES = {
+    "SOXLB", "NVDAB", "SPCXB", "MUB", "GOOGLB", "QQQB", "CRCLB", "MSTRB", "INTCB", "ANTB",
+    "SNDKB", "KORUB", "SNXXB", "TQQQB", "SOXSB", "SKHYB", "AMDB", "NBISB", "MRVLB", "SPYB",
+    "TSLAB", "EWYB", "AVGOB", "DRAMB", "BNCB", "AMZNB", "COINB", "BEB", "TSMB", "BMNRB",
+    "METAB", "MSFTB", "INTWB", "LITEB", "IRENB", "AAOIB", "AAPLB", "SQQQB", "HOODB", "MUUB",
+    "CBRSB", "AXTIB", "PDDB", "CRWVB", "PLTRB", "ARMB", "QCOMB", "BABAB", "COHRB", "MVLLB",
+    "MRNAB", "ALABB", "WDCB", "RKLBB", "AMATB", "ORCLB", "SHAZB", "KSTRB", "APPB", "SMHB",
+    "GLWB", "NFLXB", "DELLB", "UVXYB", "ASTSB", "STXB", "AGPUB", "CRDOB", "GEVB", "SKDDB",
+    "GMEB", "SMCIB", "ASMLB", "CYPHB", "BSPB", "USARB",
+}
+
+
 LEVERAGED_SUFFIXES = ("UP", "DOWN", "BULL", "BEAR")
 MAJORS = {"BTC", "ETH"}
 
@@ -34,14 +45,20 @@ class AssetMeta:
     is_major: bool
 
 
-def excluded_crypto_base(base: str) -> bool:
+def excluded_crypto_base(base: str, listed: frozenset[str] | set[str] = frozenset()) -> bool:
+    """`listed` = all USDT-quoted bases on the exchange. Binance leveraged tokens are
+    <LISTED BASE> + UP/DOWN/BULL/BEAR (BTCUP), so a suffix only counts when the stem is listed;
+    this keeps JUP, SYRUP etc."""
     if not (base.isascii() and base.isalnum()):
         return True
     if base in STABLE_BASES or base.endswith("USD") or base in WRAPPED_OR_COMMODITY_BASES:
         return True
-    if base.endswith(LEVERAGED_SUFFIXES):
+    if base in TOKENIZED_EQUITY_BASES:
         return True
-    return len(base) >= 3 and base.endswith("B") and base not in REAL_B_BASES
+    for suf in LEVERAGED_SUFFIXES:
+        if base.endswith(suf) and base[: -len(suf)] in listed:
+            return True
+    return False
 
 
 def _yahoo_ticker(t: str) -> str:
@@ -102,12 +119,14 @@ def crypto_universe(n: int = 60) -> list[AssetMeta]:
     resp = requests.get(f"{binance.BASE_URL}/api/v3/ticker/24hr", timeout=30)
     resp.raise_for_status()
     rows = []
-    for t in resp.json():
+    tickers = resp.json()
+    listed = {t["symbol"][:-4] for t in tickers if t["symbol"].endswith("USDT")}
+    for t in tickers:
         sym = t["symbol"]
         if not sym.endswith("USDT"):
             continue
         base = sym[: -len("USDT")]
-        if excluded_crypto_base(base):
+        if excluded_crypto_base(base, listed):
             continue
         rows.append((sym, base, float(t["quoteVolume"])))
     rows.sort(key=lambda r: r[2], reverse=True)

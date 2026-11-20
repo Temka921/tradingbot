@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import datetime as dt
-import html
 from pathlib import Path
 
 import numpy as np
@@ -99,9 +98,11 @@ def _heatmap_html(tables: list[pd.DataFrame], regime_col: str, title: str) -> st
         for c in z.columns:
             try:
                 r = idx.loc[(s, c)]
-                row.append(f"{s}<br>{c}<br>n={int(r.n_all)}, dates={int(r.n_dates)}<br>"
-                           f"mean excess={_bps(r.mean_all)} bps<br>t={_fmt('t', r.t)}, q={_fmt('q', r.q)}"
-                           + ("<br>insufficient" if r.insufficient else ""))
+                if r.insufficient:
+                    row.append(f"{s}<br>{c}<br>insufficient data (n={int(r.n_all)}, dates={int(r.n_dates)})")
+                else:
+                    row.append(f"{s}<br>{c}<br>n={int(r.n_all)}, dates={int(r.n_dates)}<br>"
+                               f"mean excess={_bps(r.mean_all)} bps<br>t={_fmt('t', r.t)}, q={_fmt('q', r.q)}")
             except KeyError:
                 row.append(f"{s}<br>{c}<br>no rows")
         text.append(row)
@@ -114,10 +115,14 @@ def _heatmap_html(tables: list[pd.DataFrame], regime_col: str, title: str) -> st
     return fig.to_html(full_html=False, include_plotlyjs=False, config={"responsive": True})
 
 
-def _quality_count(quality: pd.DataFrame | None, symbols: set[str]) -> int | None:
+def _quality_count(quality: pd.DataFrame | None, symbols: set[str], market: str) -> int | None:
+    """Quality-issue rows for this market's assets (market column filter where populated)."""
     if quality is None or "symbol" not in quality:
         return None
-    return int(quality["symbol"].isin(symbols).sum())
+    q = quality
+    if "market" in q:
+        q = q[q["market"].isna() | (q["market"] == market)]
+    return int(q["symbol"].isin(symbols).sum())
 
 
 def build_report(panels: dict[str, pd.DataFrame], out_path: Path, horizon: int = 10,
@@ -134,9 +139,12 @@ def build_report(panels: dict[str, pd.DataFrame], out_path: Path, horizon: int =
 
     coverage, leaders, tr_tabs, vol_tabs, segments = [], [], [], [], []
     for market, panel in panels.items():
+        found = sorted(map(str, panel["market"].dropna().unique()))
+        if found != [market]:
+            raise ValueError(f"panel for market {market!r} must contain only that market; found {found}")
         disc = panel[panel["split"] == "discovery"]
         syms = set(panel["asset"].astype(str).unique())
-        qn = _quality_count(quality, syms)
+        qn = _quality_count(quality, syms, market)
         coverage.append({
             "market": market, "assets": len(syms), "rows": len(panel),
             "start": str(pd.to_datetime(panel["date"]).min().date()),

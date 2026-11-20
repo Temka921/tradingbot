@@ -5,11 +5,11 @@ import numpy as np
 import pandas as pd
 
 from swingbot import config
-from swingbot.analysis.stats import bh_qvalues, hac_test, per_date_means
+from swingbot.analysis.stats import bh_qvalues, date_matched_edge_test, per_date_means
 from swingbot.signals import SIGNAL_INFO
 
 METRICS = ("excess", "ret")
-STAT_COLS = ["n_all", "n_solo", "mean_all", "mean_solo", "edge_vs_all_days", "median_all",
+STAT_COLS = ["n_all", "n_solo", "n_dates", "mean_all", "mean_solo", "edge_vs_all_days", "median_all",
              "hit_rate", "profit_factor", "t", "p", "q", "occ_per_year", "insufficient"]
 
 
@@ -68,14 +68,20 @@ def _group_codes(sub: pd.DataFrame, group_by: list[str]) -> tuple[np.ndarray, li
     return codes, keys
 
 
-def _baseline_means(vals: np.ndarray, dates: np.ndarray, codes: np.ndarray, n_groups: int) -> np.ndarray:
-    """Date-clustered mean of the metric over all rows, per group."""
+def _baseline_daily(vals: np.ndarray, dates: np.ndarray, codes: np.ndarray,
+                    n_groups: int) -> list[pd.Series]:
+    """Per group: date-sorted per-date mean of the metric over all non-NaN rows."""
+    out = [pd.Series([], dtype="float64") for _ in range(n_groups)]
     ok = (codes >= 0) & ~np.isnan(vals)
-    out = np.full(n_groups, np.nan)
     if ok.any():
         df = pd.DataFrame({"g": codes[ok], "d": dates[ok], "v": vals[ok]})
-        m = df.groupby(["g", "d"], sort=False)["v"].mean().groupby(level="g").mean()
-        out[m.index.to_numpy()] = m.to_numpy()
+        m = df.groupby(["g", "d"], sort=True)["v"].mean()
+        g = m.index.get_level_values("g").to_numpy()
+        d = m.index.get_level_values("d")
+        bounds = np.searchsorted(g, np.arange(n_groups + 1))
+        for k in range(n_groups):
+            lo, hi = bounds[k], bounds[k + 1]
+            out[k] = pd.Series(m.to_numpy()[lo:hi], index=d[lo:hi])
     return out
 
 
@@ -89,11 +95,14 @@ def _span_years(dates: np.ndarray, codes: np.ndarray, n_groups: int) -> np.ndarr
     return out
 
 
-def _row_stats(v: np.ndarray, d: np.ndarray, solo: np.ndarray, horizon: int) -> dict:
+def _row_stats(v: np.ndarray, d: np.ndarray, solo: np.ndarray, base_daily: pd.Series,
+               horizon: int) -> dict:
     ok = ~np.isnan(v)
     v, d, solo = v[ok], d[ok], solo[ok]
     n = len(v)
-    res = hac_test(per_date_means(v, d), horizon, n)
+    daily = per_date_means(v, d)
+    mean_all = float(daily.mean()) if n else np.nan
+    res = date_matched_edge_test(daily, base_daily, horizon, n)
     n_solo = int(solo.sum())
     mean_solo = float(per_date_means(v[solo], d[solo]).mean()) if n_solo else np.nan
     if n:
@@ -106,9 +115,9 @@ def _row_stats(v: np.ndarray, d: np.ndarray, solo: np.ndarray, horizon: int) -> 
         median, hit = float(np.median(v)), float((v > 0).mean())
     else:
         pf = median = hit = np.nan
-    return {"n_all": n, "n_solo": n_solo, "mean_all": res.mean, "mean_solo": mean_solo,
-            "median_all": median, "hit_rate": hit, "profit_factor": pf,
-            "t": res.t, "p": res.p}
+    return {"n_all": n, "n_solo": n_solo, "n_dates": int(len(daily)), "mean_all": mean_all,
+            "mean_solo": mean_solo, "edge_vs_all_days": res.mean, "median_all": median,
+            "hit_rate": hit, "profit_factor": pf, "t": res.t, "p": res.p}
 
 
 def solo_table(panel: pd.DataFrame, horizon: int = 10, metric: str = "excess",
@@ -119,18 +128,24 @@ def solo_table(panel: pd.DataFrame, horizon: int = 10, metric: str = "excess",
     The outcome column is ``f"{metric}_{direction}_{horizon}"`` using each
     signal's direction. Only rows of ``split`` are used (``None`` = all rows).
     Rows with a NaN group key are dropped; NaN metric values are ignored, so
-    ``n_all``/``n_solo`` count occurrences with a known outcome.
+    ``n_all``/``n_solo`` count occurrences with a known outcome and
+    ``n_dates`` counts the distinct dates among them.
 
-    - ``mean_all``/``mean_solo``: date-clustered means (mean of per-date means,
-      equal-weighting dates). ``t``/``p`` come from the HAC test of mean_all.
-    - ``edge_vs_all_days``: mean_all minus the same clustered mean over every
-      row of the group/split, signal or not.
+    - ``mean_all``/``mean_solo``: date-weighted means (mean of per-date means,
+      equal-weighting dates, not occurrences) of the metric itself.
+    - ``edge_vs_all_days``: date-matched edge. For each signal date,
+      d = mean of the signal's values that date - mean of all non-NaN rows
+      (signal or not) that date in the same group/split; the column is the
+      date-weighted mean of d.
+    - ``t``/``p``: HAC test (see ``stats.hac_test``) on the date-sorted d
+      series, so p tests whether the signal beats the same-day all-rows
+      average, not whether its return is non-zero. NaN with < 5*horizon dates.
     - ``profit_factor``: sum of gains / |sum of losses|; inf with gains but no
       losses; NaN with no rows (or all-zero values).
     - ``occ_per_year``: n_all / span in years of all dates in the group/split.
     - ``q``: Benjamini-Hochberg across every row of the returned table.
-    - ``insufficient``: n_all < MIN_N (no groups) or < MIN_N_SLICE (groups);
-      such rows must never be ranked as winners.
+    - ``insufficient``: n_all or n_dates below MIN_N (no groups) or
+      MIN_N_SLICE (groups); such rows must never be ranked as winners.
     """
     if metric not in METRICS:
         raise ValueError(f"metric must be one of {METRICS}, got {metric!r}")
@@ -152,7 +167,7 @@ def solo_table(panel: pd.DataFrame, horizon: int = 10, metric: str = "excess",
 
     directions = sorted({d for _, d in info.values()})
     vals = {d: col(f"{metric}_{d}_{horizon}").astype("float64") for d in directions}
-    base = {d: _baseline_means(vals[d], dates, codes, n_groups) for d in directions}
+    base = {d: _baseline_daily(vals[d], dates, codes, n_groups) for d in directions}
     fam_any = _family_any(panel, info, rows)
 
     out = []
@@ -166,10 +181,9 @@ def solo_table(panel: pd.DataFrame, horizon: int = 10, metric: str = "excess",
         bounds = np.searchsorted(g, np.arange(n_groups + 1))
         for k in range(n_groups):
             lo, hi = bounds[k], bounds[k + 1]
-            st = _row_stats(v[lo:hi], d[lo:hi], s[lo:hi], horizon)
-            st["edge_vs_all_days"] = st["mean_all"] - base[direction][k]
+            st = _row_stats(v[lo:hi], d[lo:hi], s[lo:hi], base[direction][k], horizon)
             st["occ_per_year"] = st["n_all"] / span[k] if np.isfinite(span[k]) else np.nan
-            st["insufficient"] = st["n_all"] < min_n
+            st["insufficient"] = (st["n_all"] < min_n) or (st["n_dates"] < min_n)
             out.append({"signal": name, "family": family, "direction": direction,
                         **dict(zip(group_by, keys[k])), **st})
 
@@ -178,5 +192,6 @@ def solo_table(panel: pd.DataFrame, horizon: int = 10, metric: str = "excess",
     table.insert(table.columns.get_loc("p") + 1, "q", bh_qvalues(table["p"].to_numpy(dtype="float64")))
     table["n_all"] = table["n_all"].astype(np.int64)
     table["n_solo"] = table["n_solo"].astype(np.int64)
+    table["n_dates"] = table["n_dates"].astype(np.int64)
     table["insufficient"] = table["insufficient"].astype(bool)
     return table

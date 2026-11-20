@@ -3,10 +3,12 @@ import warnings
 import numpy as np
 import pandas as pd
 import pytest
+import statsmodels.api as sm
 
 from swingbot import config
 from swingbot.analysis.solo import solo_mask, solo_table
-from swingbot.analysis.stats import TestResult, bh_qvalues, clustered_mean_test
+from swingbot.analysis.stats import (TestResult, bh_qvalues, clustered_mean_test,
+                                     date_matched_edge_test, per_date_means)
 
 INFO = {
     "A": ("trend", "long"),
@@ -108,7 +110,7 @@ def test_solo_table_columns_and_direction_metric():
     p["excess_short_10"] = np.float32(0.05)
     p["excess_long_10"] = np.float32(-0.05)
     t = solo_table(p, horizon=10, signal_info=INFO)
-    expected = ["signal", "family", "direction", "n_all", "n_solo", "mean_all", "mean_solo",
+    expected = ["signal", "family", "direction", "n_all", "n_solo", "n_dates", "mean_all", "mean_solo",
                 "edge_vs_all_days", "median_all", "hit_rate", "profit_factor", "t", "p", "q",
                 "occ_per_year", "insufficient"]
     assert list(t.columns) == expected
@@ -126,14 +128,20 @@ def test_solo_table_values_match_manual():
     t = solo_table(p, horizon=10, signal_info=INFO).set_index("signal")
     a = p[p["A"]]
     r = clustered_mean_test(a["excess_long_10"].astype(float), a["date"], 10)
-    base = clustered_mean_test(p["excess_long_10"].astype(float), p["date"], 10)
+    # independent date-matched edge: per-date signal mean minus per-date all-rows mean
+    sig_d = a.groupby("date")["excess_long_10"].mean().astype(float)
+    all_d = p.groupby("date")["excess_long_10"].mean().astype(float)
+    d = (sig_d - all_d.reindex(sig_d.index)).sort_index().to_numpy()
+    fit = sm.OLS(d, np.ones((len(d), 1))).fit(cov_type="HAC", cov_kwds={"maxlags": 20}, use_t=True)
     row = t.loc["A"]
     assert row["n_all"] == len(a)
+    assert row["n_dates"] == a["date"].nunique()
     assert row["mean_all"] == pytest.approx(r.mean)
-    assert row["p"] == pytest.approx(r.p)
-    assert row["edge_vs_all_days"] == pytest.approx(r.mean - base.mean)
-    solo = a[~a["C"]]
-    assert row["n_solo"] == len(solo)
+    assert row["edge_vs_all_days"] == pytest.approx(d.mean())
+    assert row["t"] == pytest.approx(fit.tvalues[0])
+    assert row["p"] == pytest.approx(fit.pvalues[0])
+    assert row["n_solo"] == int((p["A"] & solo_mask(p, "A", signal_info=INFO)).sum())
+    assert row["n_solo"] == int((p["A"] & ~p["C"] & ~p["R"] & ~p["Z"]).sum())
     v = a["excess_long_10"].astype(float)
     assert row["hit_rate"] == pytest.approx((v > 0).mean())
     assert row["median_all"] == pytest.approx(v.median())
@@ -209,3 +217,92 @@ def test_solo_table_ret_metric():
     p["ret_short_5"] = np.float32(0.01)
     t = solo_table(p, horizon=5, metric="ret", signal_info=INFO).set_index("signal")
     assert t.loc["C", "mean_all"] == pytest.approx(0.01, rel=1e-5)
+
+
+# ---------- fix round 1: HAC settings, date-matched edge, n_dates ----------
+
+def test_hac_settings_and_min_dates():
+    rng = np.random.default_rng(3)
+    dates = pd.Series(pd.bdate_range("2001-01-01", periods=300))
+    y = rng.normal(0.001, 0.02, 300)
+    r = clustered_mean_test(pd.Series(y), dates, horizon=10)
+    fit = sm.OLS(y, np.ones((300, 1))).fit(cov_type="HAC", cov_kwds={"maxlags": 20}, use_t=True)
+    assert r.se == pytest.approx(fit.bse[0]) and r.p == pytest.approx(fit.pvalues[0])
+    # fewer than 5*horizon dates -> no p-value; exactly 5*horizon -> p-value
+    short = clustered_mean_test(pd.Series(y[:49]), dates[:49], horizon=10)
+    assert np.isnan(short.p) and np.isnan(short.se) and np.isfinite(short.mean)
+    assert np.isfinite(clustered_mean_test(pd.Series(y[:50]), dates[:50], horizon=10).p)
+
+
+def test_hac_sees_date_sorted_input():
+    rng = np.random.default_rng(4)
+    n = 600
+    dates = pd.bdate_range("2003-01-01", periods=n)
+    e = rng.normal(0, 1, n + 9)
+    y = np.convolve(e, np.ones(10), "valid")[:n] * 0.01 + 0.002   # strongly autocorrelated
+    perm = rng.permutation(n)
+    shuffled = clustered_mean_test(pd.Series(y[perm]), pd.Series(dates[perm]), horizon=10)
+    ordered = sm.OLS(y, np.ones((n, 1))).fit(cov_type="HAC", cov_kwds={"maxlags": 20}, use_t=True)
+    wrong = sm.OLS(y[perm], np.ones((n, 1))).fit(cov_type="HAC", cov_kwds={"maxlags": 20}, use_t=True)
+    assert shuffled.se == pytest.approx(ordered.bse[0])
+    assert abs(wrong.bse[0] - ordered.bse[0]) > 0.1 * ordered.bse[0]  # order matters
+
+
+def test_date_matched_edge_test_unsorted_signal_index():
+    base = pd.Series([0.0, 0.1, 0.2], index=pd.to_datetime(["2020-01-01", "2020-01-02", "2020-01-03"]))
+    sig = pd.Series([0.5, 0.2], index=pd.to_datetime(["2020-01-03", "2020-01-01"]))
+    r = date_matched_edge_test(sig, base, horizon=1, n=2)
+    assert r.mean == pytest.approx((0.3 + 0.2) / 2) and r.n_dates == 2
+
+
+def test_insufficient_when_few_dates_many_occurrences():
+    dates = pd.bdate_range("2010-01-01", periods=400)
+    assets = [f"S{i}" for i in range(40)]
+    p = pd.MultiIndex.from_product([dates, assets], names=["date", "asset"]).to_frame(index=False)
+    rng = np.random.default_rng(5)
+    p["excess_long_10"] = rng.normal(0, 0.02, len(p)).astype("float32")
+    p["split"] = pd.Categorical(["discovery"] * len(p))
+    p["F"] = p["date"].isin(dates[[10, 100, 200, 300, 390]])   # 200 firings on 5 dates
+    t = solo_table(p, horizon=10, signal_info={"F": ("trend", "long")}).iloc[0]
+    assert t["n_all"] == 200 and t["n_dates"] == 5
+    assert t["insufficient"]
+    assert np.isnan(t["p"]) and np.isnan(t["q"])
+
+
+def test_edge_removes_common_drift():
+    """With metric=ret, a market-wide drift must not make a random signal significant."""
+    p = make_panel(n_dates=1500, assets=tuple(f"S{i}" for i in range(10)), seed=7)
+    p["ret_long_10"] = (p["ret_long_10"] + 0.01).astype("float32")
+    t = solo_table(p, horizon=10, metric="ret", signal_info=INFO).set_index("signal")
+    a = t.loc["A"]
+    assert a["mean_all"] == pytest.approx(0.01, abs=0.002)
+    assert abs(a["edge_vs_all_days"]) < 0.002
+    assert a["p"] > 0.01
+    # the old mean != 0 test would have called it a sure thing
+    sub = p[p["A"]]
+    assert clustered_mean_test(sub["ret_long_10"].astype(float), sub["date"], 10).p < 1e-6
+
+
+def test_edge_detects_real_edge():
+    p = make_panel(n_dates=1500, assets=tuple(f"S{i}" for i in range(10)), seed=8)
+    p.loc[p["A"], "excess_long_10"] += np.float32(0.01)
+    a = solo_table(p, horizon=10, signal_info=INFO).set_index("signal").loc["A"]
+    assert a["edge_vs_all_days"] == pytest.approx(0.007, abs=0.002)  # 0.01 * (1 - share firing)
+    assert a["p"] < 1e-6
+
+
+def test_edge_test_null_size():
+    """Null calibration: overlapping 10-day sums, random firings -> size <= 8% at 5%."""
+    h, n_dates, n_assets, reps = 10, 1500, 10, 200
+    rng = np.random.default_rng(123)
+    dates = np.repeat(pd.bdate_range("2000-01-01", periods=n_dates).values, n_assets)
+    rejections = 0
+    for _ in range(reps):
+        r = rng.normal(0, 0.01, (n_dates + h, n_assets)) + rng.normal(0, 0.01, (n_dates + h, 1))
+        c = np.cumsum(r, axis=0)
+        v = (c[h:] - c[:-h])[:n_dates].ravel()          # overlapping h-day forward sums
+        f = rng.random(n_dates * n_assets) < 0.3
+        res = date_matched_edge_test(per_date_means(v[f], dates[f]),
+                                     per_date_means(v, dates), h, int(f.sum()))
+        rejections += res.p < 0.05
+    assert rejections / reps <= 0.08

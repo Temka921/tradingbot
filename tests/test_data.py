@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -138,9 +140,17 @@ def test_download_skips_failures(monkeypatch, tmp_path):
     msgs = run(assets, fetch)
     skips = [m for m in msgs if m.startswith("SKIP")]
     assert len(skips) == 2
+    assert "SKIP BOOM: RuntimeError: net down" in skips
+    assert "SKIP EMPTY: empty frame" in skips
     assert (tmp_path / "raw" / "stock" / "GOOD.parquet").exists()
     assert not (tmp_path / "raw" / "stock" / "BOOM.parquet").exists()
-    assert (tmp_path / "quality_report.csv").exists()
+    rep = pd.read_csv(tmp_path / "quality_report.csv", keep_default_na=False)
+    assert rep["symbol"].tolist() == ["GOOD"] and rep["market"].tolist() == ["stock"]
+    assert rep["issues"].tolist() == [""]
+    meta = pd.read_parquet(tmp_path / "universe_meta.parquet")
+    assert meta["symbol"].tolist() == ["GOOD"]
+    assert meta.iloc[0].to_dict() == {"symbol": "GOOD", "market": "stock", "sector": "tech",
+                                      "cap_bucket": "large", "is_etf": False, "is_major": False}
 
 
 def test_with_benchmark_always_included():
@@ -163,7 +173,13 @@ def test_reports_upsert_across_runs(monkeypatch, tmp_path):
     run([c], lambda a: good)
     meta = pd.read_parquet(tmp_path / "universe_meta.parquet")
     assert set(meta["symbol"]) == {"AAA", "BTCUSDT"}
-    assert set(pd.read_csv(tmp_path / "quality_report.csv")["symbol"]) == {"AAA", "BTCUSDT"}
+    rep = pd.read_csv(tmp_path / "quality_report.csv")
+    assert set(rep["symbol"]) == {"AAA", "BTCUSDT"}
+    assert dict(zip(rep["symbol"], rep["market"])) == {"AAA": "stock", "BTCUSDT": "crypto"}
+    # rerunning an asset replaces its row rather than duplicating it
+    run([s], lambda a: good)
+    assert len(pd.read_csv(tmp_path / "quality_report.csv")) == 2
+    assert len(pd.read_parquet(tmp_path / "universe_meta.parquet")) == 2
 
 
 def test_save_failure_skips_and_reports_written(monkeypatch, tmp_path):
@@ -198,3 +214,85 @@ def test_retry_then_success(monkeypatch):
     a = AssetMeta("X", "stock", "t", "large", False, False)
     assert not download.fetch_with_retry(flaky, a).empty
     assert n["c"] == 3 and sleeps == [1, 2]
+
+
+def _tick(sym, qv):
+    return {"symbol": sym, "quoteVolume": str(qv)}
+
+
+def test_crypto_universe_exclusions_and_order(monkeypatch, tmp_path):
+    monkeypatch.setattr(universe, "UNIVERSE_DIR", tmp_path)
+    bad = ["USD1", "RLUSD", "XUSD", "RWUSD", "U", "WBTC", "PAXG", "XAUT", "NVDAB", "TQQQB", "QQQB",
+           "MUB", "牛来", "ETHDOWN", "BNBBULL"]
+    good = [("ETHUSDT", 50), ("BTCUSDT", 10), ("BNBUSDT", 30), ("YBUSDT", 20), ("SOLUSDT", 40)]
+    tickers = [_tick(b + "USDT", 1e12) for b in bad] + [_tick(s, v) for s, v in good]
+    tickers += [_tick("ETHBTC", 1e12), _tick("BTCEUR", 1e12), _tick("BTCUSDC", 1e12)]
+    monkeypatch.setattr(universe.requests, "get", lambda *a, **k: FakeResp(tickers))
+    out = universe.crypto_universe(60)
+    assert [a.symbol for a in out] == ["ETHUSDT", "SOLUSDT", "BNBUSDT", "YBUSDT", "BTCUSDT"]
+    assert [a.is_major for a in out] == [True, False, False, False, True]
+    assert [a.cap_bucket for a in out] == ["major", "alt", "alt", "alt", "major"]
+
+
+def test_crypto_universe_top_n_and_cache(monkeypatch, tmp_path):
+    monkeypatch.setattr(universe, "UNIVERSE_DIR", tmp_path)
+    tickers = [_tick(f"C{i}USDT", i) for i in range(1, 11)]
+    calls = []
+
+    def fake_get(*a, **k):
+        calls.append(1)
+        return FakeResp(tickers)
+
+    monkeypatch.setattr(universe.requests, "get", fake_get)
+    out = universe.crypto_universe(3)
+    assert [a.symbol for a in out] == ["C10USDT", "C9USDT", "C8USDT"]
+    again = universe.crypto_universe(3)
+    assert again == out and len(calls) == 1  # cache reused, no second request
+    assert [a.symbol for a in universe.crypto_universe(2)] == ["C10USDT", "C9USDT"]
+
+
+def test_committed_crypto_cache_is_clean():
+    cache = universe._read_cache(Path(__file__).resolve().parents[1] / "universe" / "crypto.csv")
+    assert len(cache) == 60 and cache[0].symbol == "BTCUSDT"
+    for a in cache:
+        assert a.symbol.endswith("USDT")
+        assert not universe.excluded_crypto_base(a.symbol[:-4]), a.symbol
+
+
+def test_yahoo_ticker():
+    assert universe._yahoo_ticker("BRK.B") == "BRK-B"
+    assert universe._yahoo_ticker(" BF.B ") == "BF-B"
+    assert universe._yahoo_ticker("AAPL") == "AAPL"
+
+
+def test_stock_universe_wikipedia_parse(monkeypatch, tmp_path):
+    (tmp_path / "etfs.csv").write_text("symbol,sector\nSPY,broad\nXLK,tech\nAAPL,tech\n")
+    monkeypatch.setattr(universe, "UNIVERSE_DIR", tmp_path)
+    sp500 = ("<table><tr><th>Symbol</th><th>GICS Sector</th></tr>"
+             "<tr><td>AAPL</td><td>Information Technology</td></tr>"
+             "<tr><td>BRK.B</td><td>Financials</td></tr></table>")
+    sp400 = ("<table><tr><th>Symbol</th><th>GICS Sector</th></tr>"
+             "<tr><td>AOS</td><td>Industrials</td></tr></table>")
+
+    class R:
+        def __init__(self, text):
+            self.text = text
+
+        def raise_for_status(self):
+            pass
+
+    def fake_get(url, **k):
+        return R(sp500 if "500" in url else sp400)
+
+    monkeypatch.setattr(universe.requests, "get", fake_get)
+    out = universe.stock_universe()
+    by = {a.symbol: a for a in out}
+    assert [a.symbol for a in out] == ["AAPL", "BRK-B", "AOS", "SPY", "XLK"]  # AAPL deduped
+    assert by["AAPL"].cap_bucket == "large" and by["AAPL"].sector == "Information Technology"
+    assert by["BRK-B"].cap_bucket == "large" and by["AOS"].cap_bucket == "mid"
+    assert by["SPY"].is_etf and by["SPY"].sector == "broad" and by["SPY"].cap_bucket == "etf"
+    assert by["XLK"].is_etf and by["XLK"].sector == "tech"
+    assert all(a.market == "stock" for a in out)
+    # cache written and reused with no network
+    monkeypatch.setattr(universe.requests, "get", lambda *a, **k: pytest.fail("network"))
+    assert universe.stock_universe() == out

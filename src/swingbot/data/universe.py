@@ -13,7 +13,13 @@ UA = {"User-Agent": "Mozilla/5.0 (compatible; swingbot-research/0.1)"}
 SP500_URL = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
 SP400_URL = "https://en.wikipedia.org/wiki/List_of_S%26P_400_companies"
 STABLE_BASES = {"USDC", "FDUSD", "TUSD", "DAI", "USDP", "BUSD", "EUR", "USDE",
-                "USD1", "PYUSD", "RLUSD", "USDS", "XUSD"}
+                "USD1", "PYUSD", "RLUSD", "USDS", "XUSD", "RWUSD", "U"}
+# Non-core exclusions: wrapped/duplicate BTC and tokenized gold (not independent crypto assets).
+WRAPPED_OR_COMMODITY_BASES = {"WBTC", "PAXG", "XAUT"}
+# Binance tokenized stocks/ETFs trade as <TICKER>B (NVDAB, QQQB, TQQQB, ...). Rule: base of
+# length >= 3 ending in "B" is excluded, except real coins in REAL_B_BASES (BNB). A new real
+# coin ending in B would be wrongly excluded; the cache is committed so this is reviewable.
+REAL_B_BASES = {"BNB"}
 LEVERAGED_SUFFIXES = ("UP", "DOWN", "BULL", "BEAR")
 MAJORS = {"BTC", "ETH"}
 
@@ -26,6 +32,16 @@ class AssetMeta:
     cap_bucket: str
     is_etf: bool
     is_major: bool
+
+
+def excluded_crypto_base(base: str) -> bool:
+    if not (base.isascii() and base.isalnum()):
+        return True
+    if base in STABLE_BASES or base.endswith("USD") or base in WRAPPED_OR_COMMODITY_BASES:
+        return True
+    if base.endswith(LEVERAGED_SUFFIXES):
+        return True
+    return len(base) >= 3 and base.endswith("B") and base not in REAL_B_BASES
 
 
 def _yahoo_ticker(t: str) -> str:
@@ -91,7 +107,7 @@ def crypto_universe(n: int = 60) -> list[AssetMeta]:
         if not sym.endswith("USDT"):
             continue
         base = sym[: -len("USDT")]
-        if base in STABLE_BASES or base.endswith(LEVERAGED_SUFFIXES):
+        if excluded_crypto_base(base):
             continue
         rows.append((sym, base, float(t["quoteVolume"])))
     rows.sort(key=lambda r: r[2], reverse=True)

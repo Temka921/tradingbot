@@ -196,3 +196,32 @@ def test_outcomes_float32():
     _stock_setup()
     out = panel.build_panel("stock")
     assert out["ret_long_10"].dtype == "float32"
+
+
+@pytest.mark.parametrize("n", [0, 1, 10, 251, 252, 600])
+def test_label_regimes_any_length(n):
+    df = rand_bars(n, seed=9) if n else rand_bars(1).iloc[:0]
+    out = label_regimes(df, rand_bars(700, seed=10))
+    assert len(out) == n
+    if n < 252:
+        assert (out["vol_regime"] == "unknown").all()
+    if n == 600:
+        assert (out["vol_regime"].iloc[-1] != "unknown")
+
+
+def test_build_panel_short_history_asset_included(capsys):
+    _stock_setup([("NEW", "stock", "Tech", "large", False, False)])
+    store.save_bars("NEW", "stock", rand_bars(120, seed=8, start="2020-01-01"))
+    out = panel.build_panel("stock")
+    new = out[out["asset"] == "NEW"]
+    assert len(new) == 120
+    assert (new["vol_regime"] == "unknown").all()
+    assert "SKIP NEW" not in capsys.readouterr().out
+
+
+def test_build_panel_empty_after_holdout_cut_skipped(capsys):
+    _stock_setup([("LATE", "stock", "Tech", "large", False, False)])
+    store.save_bars("LATE", "stock", rand_bars(100, seed=8, start="2025-01-01"))
+    out = panel.build_panel("stock")
+    assert set(out["asset"]) == {"SPY", "AAA"}
+    assert "SKIP LATE" in capsys.readouterr().out

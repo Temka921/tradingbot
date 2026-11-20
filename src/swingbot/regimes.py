@@ -13,6 +13,8 @@ TREND_SLOPE_LAG = 20
 def _trailing_pct_rank(x: pd.Series, window: int, min_periods: int) -> pd.Series:
     """Fraction of the trailing `window` values (incl. current) that are <= current."""
     v = x.to_numpy(dtype=float)
+    if len(v) == 0:
+        return pd.Series([], index=x.index, dtype=float)
     padded = np.concatenate([np.full(window - 1, np.nan), v])
     win = sliding_window_view(padded, window)
     count = (~np.isnan(win)).sum(axis=1)

@@ -1,0 +1,924 @@
+symbol,market,sector,cap_bucket,is_etf,is_major
+MMM,stock,Industrials,large,False,False
+AOS,stock,Industrials,large,False,False
+ABT,stock,Health Care,large,False,False
+ABBV,stock,Health Care,large,False,False
+ACN,stock,Information Technology,large,False,False
+ADBE,stock,Information Technology,large,False,False
+AMD,stock,Information Technology,large,False,False
+AES,stock,Utilities,large,False,False
+AFL,stock,Financials,large,False,False
+A,stock,Health Care,large,False,False
+APD,stock,Materials,large,False,False
+ABNB,stock,Consumer Discretionary,large,False,False
+AKAM,stock,Information Technology,large,False,False
+ALB,stock,Materials,large,False,False
+ARE,stock,Real Estate,large,False,False
+ALGN,stock,Health Care,large,False,False
+ALLE,stock,Industrials,large,False,False
+LNT,stock,Utilities,large,False,False
+ALL,stock,Financials,large,False,False
+GOOGL,stock,Communication Services,large,False,False
+GOOG,stock,Communication Services,large,False,False
+MO,stock,Consumer Staples,large,False,False
+AMZN,stock,Consumer Discretionary,large,False,False
+AMCR,stock,Materials,large,False,False
+AEE,stock,Utilities,large,False,False
+AEP,stock,Utilities,large,False,False
+AXP,stock,Financials,large,False,False
+AIG,stock,Financials,large,False,False
+AMT,stock,Real Estate,large,False,False
+AWK,stock,Utilities,large,False,False
+AMP,stock,Financials,large,False,False
+AME,stock,Industrials,large,False,False
+AMGN,stock,Health Care,large,False,False
+APH,stock,Information Technology,large,False,False
+ADI,stock,Information Technology,large,False,False
+AON,stock,Financials,large,False,False
+APA,stock,Energy,large,False,False
+APO,stock,Financials,large,False,False
+AAPL,stock,Information Technology,large,False,False
+AMAT,stock,Information Technology,large,False,False
+APP,stock,Communication Services,large,False,False
+APTV,stock,Consumer Discretionary,large,False,False
+ACGL,stock,Financials,large,False,False
+ADM,stock,Consumer Staples,large,False,False
+ARES,stock,Financials,large,False,False
+ANET,stock,Information Technology,large,False,False
+AJG,stock,Financials,large,False,False
+AIZ,stock,Financials,large,False,False
+T,stock,Communication Services,large,False,False
+ATO,stock,Utilities,large,False,False
+ADSK,stock,Information Technology,large,False,False
+ADP,stock,Industrials,large,False,False
+AZO,stock,Consumer Discretionary,large,False,False
+AVY,stock,Materials,large,False,False
+AXON,stock,Industrials,large,False,False
+BKR,stock,Energy,large,False,False
+BALL,stock,Materials,large,False,False
+BAC,stock,Financials,large,False,False
+BAX,stock,Health Care,large,False,False
+BDX,stock,Health Care,large,False,False
+BRK-B,stock,Financials,large,False,False
+BBY,stock,Consumer Discretionary,large,False,False
+TECH,stock,Health Care,large,False,False
+BIIB,stock,Health Care,large,False,False
+BLK,stock,Financials,large,False,False
+BX,stock,Financials,large,False,False
+XYZ,stock,Financials,large,False,False
+BE,stock,Industrials,large,False,False
+BNY,stock,Financials,large,False,False
+BA,stock,Industrials,large,False,False
+BKNG,stock,Consumer Discretionary,large,False,False
+BSX,stock,Health Care,large,False,False
+BMY,stock,Health Care,large,False,False
+AVGO,stock,Information Technology,large,False,False
+BR,stock,Industrials,large,False,False
+BRO,stock,Financials,large,False,False
+BF-B,stock,Consumer Staples,large,False,False
+BG,stock,Consumer Staples,large,False,False
+BXP,stock,Real Estate,large,False,False
+CHRW,stock,Industrials,large,False,False
+CDNS,stock,Information Technology,large,False,False
+CPT,stock,Real Estate,large,False,False
+COF,stock,Financials,large,False,False
+CAH,stock,Health Care,large,False,False
+CCL,stock,Consumer Discretionary,large,False,False
+CARR,stock,Industrials,large,False,False
+CVNA,stock,Consumer Discretionary,large,False,False
+CASY,stock,Consumer Staples,large,False,False
+CAT,stock,Industrials,large,False,False
+CBOE,stock,Financials,large,False,False
+CBRE,stock,Real Estate,large,False,False
+CDW,stock,Information Technology,large,False,False
+COR,stock,Health Care,large,False,False
+CNC,stock,Health Care,large,False,False
+CNP,stock,Utilities,large,False,False
+CF,stock,Materials,large,False,False
+CRL,stock,Health Care,large,False,False
+SCHW,stock,Financials,large,False,False
+CHTR,stock,Communication Services,large,False,False
+CVX,stock,Energy,large,False,False
+CMG,stock,Consumer Discretionary,large,False,False
+CB,stock,Financials,large,False,False
+CHD,stock,Consumer Staples,large,False,False
+CIEN,stock,Information Technology,large,False,False
+CI,stock,Health Care,large,False,False
+CINF,stock,Financials,large,False,False
+CTAS,stock,Industrials,large,False,False
+CSCO,stock,Information Technology,large,False,False
+C,stock,Financials,large,False,False
+CFG,stock,Financials,large,False,False
+CLX,stock,Consumer Staples,large,False,False
+CME,stock,Financials,large,False,False
+CMS,stock,Utilities,large,False,False
+KO,stock,Consumer Staples,large,False,False
+CTSH,stock,Information Technology,large,False,False
+COHR,stock,Information Technology,large,False,False
+COIN,stock,Financials,large,False,False
+CL,stock,Consumer Staples,large,False,False
+CMCSA,stock,Communication Services,large,False,False
+FIX,stock,Industrials,large,False,False
+COP,stock,Energy,large,False,False
+ED,stock,Utilities,large,False,False
+STZ,stock,Consumer Staples,large,False,False
+CEG,stock,Utilities,large,False,False
+COO,stock,Health Care,large,False,False
+CPRT,stock,Industrials,large,False,False
+GLW,stock,Information Technology,large,False,False
+CPAY,stock,Financials,large,False,False
+CSGP,stock,Real Estate,large,False,False
+COST,stock,Consumer Staples,large,False,False
+CRH,stock,Materials,large,False,False
+CRWD,stock,Information Technology,large,False,False
+CCI,stock,Real Estate,large,False,False
+CSX,stock,Industrials,large,False,False
+CMI,stock,Industrials,large,False,False
+CVS,stock,Health Care,large,False,False
+DHR,stock,Health Care,large,False,False
+DRI,stock,Consumer Discretionary,large,False,False
+DDOG,stock,Information Technology,large,False,False
+DVA,stock,Health Care,large,False,False
+DECK,stock,Consumer Discretionary,large,False,False
+DE,stock,Industrials,large,False,False
+DELL,stock,Information Technology,large,False,False
+DAL,stock,Industrials,large,False,False
+DVN,stock,Energy,large,False,False
+DXCM,stock,Health Care,large,False,False
+FANG,stock,Energy,large,False,False
+DLR,stock,Real Estate,large,False,False
+DG,stock,Consumer Staples,large,False,False
+DLTR,stock,Consumer Staples,large,False,False
+D,stock,Utilities,large,False,False
+DPZ,stock,Consumer Discretionary,large,False,False
+DASH,stock,Consumer Discretionary,large,False,False
+DOV,stock,Industrials,large,False,False
+DOW,stock,Materials,large,False,False
+DHI,stock,Consumer Discretionary,large,False,False
+DTE,stock,Utilities,large,False,False
+DUK,stock,Utilities,large,False,False
+DD,stock,Industrials,large,False,False
+ETN,stock,Industrials,large,False,False
+EBAY,stock,Consumer Discretionary,large,False,False
+ECHO,stock,Communication Services,large,False,False
+ECL,stock,Materials,large,False,False
+EIX,stock,Utilities,large,False,False
+EW,stock,Health Care,large,False,False
+ELV,stock,Health Care,large,False,False
+EME,stock,Industrials,large,False,False
+EMR,stock,Industrials,large,False,False
+ETR,stock,Utilities,large,False,False
+EOG,stock,Energy,large,False,False
+EQT,stock,Energy,large,False,False
+EFX,stock,Industrials,large,False,False
+EQIX,stock,Real Estate,large,False,False
+ERIE,stock,Financials,large,False,False
+ESS,stock,Real Estate,large,False,False
+EL,stock,Consumer Staples,large,False,False
+EG,stock,Financials,large,False,False
+EVRG,stock,Utilities,large,False,False
+P,stock,Information Technology,large,False,False
+ES,stock,Utilities,large,False,False
+EXC,stock,Utilities,large,False,False
+EXE,stock,Energy,large,False,False
+EXPE,stock,Consumer Discretionary,large,False,False
+EXPD,stock,Industrials,large,False,False
+EXR,stock,Real Estate,large,False,False
+XOM,stock,Energy,large,False,False
+FFIV,stock,Information Technology,large,False,False
+FDS,stock,Financials,large,False,False
+FICO,stock,Information Technology,large,False,False
+FAST,stock,Industrials,large,False,False
+FRT,stock,Real Estate,large,False,False
+FDX,stock,Industrials,large,False,False
+FDXF,stock,Industrials,large,False,False
+FERG,stock,Industrials,large,False,False
+FIS,stock,Financials,large,False,False
+FITB,stock,Financials,large,False,False
+FSLR,stock,Information Technology,large,False,False
+FE,stock,Utilities,large,False,False
+FISV,stock,Financials,large,False,False
+FLEX,stock,Information Technology,large,False,False
+F,stock,Consumer Discretionary,large,False,False
+FTNT,stock,Information Technology,large,False,False
+FTV,stock,Industrials,large,False,False
+FOXA,stock,Communication Services,large,False,False
+FOX,stock,Communication Services,large,False,False
+BEN,stock,Financials,large,False,False
+FCX,stock,Materials,large,False,False
+GRMN,stock,Consumer Discretionary,large,False,False
+IT,stock,Information Technology,large,False,False
+GE,stock,Industrials,large,False,False
+GEHC,stock,Health Care,large,False,False
+GEV,stock,Industrials,large,False,False
+GEN,stock,Information Technology,large,False,False
+GNRC,stock,Industrials,large,False,False
+GD,stock,Industrials,large,False,False
+GIS,stock,Consumer Staples,large,False,False
+GM,stock,Consumer Discretionary,large,False,False
+GPC,stock,Consumer Discretionary,large,False,False
+GILD,stock,Health Care,large,False,False
+GPN,stock,Financials,large,False,False
+GL,stock,Financials,large,False,False
+GDDY,stock,Information Technology,large,False,False
+GS,stock,Financials,large,False,False
+HAL,stock,Energy,large,False,False
+HIG,stock,Financials,large,False,False
+HAS,stock,Consumer Discretionary,large,False,False
+HCA,stock,Health Care,large,False,False
+DOC,stock,Real Estate,large,False,False
+HSIC,stock,Health Care,large,False,False
+HSY,stock,Consumer Staples,large,False,False
+HPE,stock,Information Technology,large,False,False
+HLT,stock,Consumer Discretionary,large,False,False
+HD,stock,Consumer Discretionary,large,False,False
+HONA,stock,Industrials,large,False,False
+HON,stock,Industrials,large,False,False
+HRL,stock,Consumer Staples,large,False,False
+HST,stock,Real Estate,large,False,False
+HWM,stock,Industrials,large,False,False
+HPQ,stock,Information Technology,large,False,False
+HUBB,stock,Industrials,large,False,False
+HUM,stock,Health Care,large,False,False
+HBAN,stock,Financials,large,False,False
+HII,stock,Industrials,large,False,False
+IBM,stock,Information Technology,large,False,False
+IEX,stock,Industrials,large,False,False
+IDXX,stock,Health Care,large,False,False
+ITW,stock,Industrials,large,False,False
+ILMN,stock,Health Care,large,False,False
+INCY,stock,Health Care,large,False,False
+IR,stock,Industrials,large,False,False
+PODD,stock,Health Care,large,False,False
+INTC,stock,Information Technology,large,False,False
+IBKR,stock,Financials,large,False,False
+ICE,stock,Financials,large,False,False
+IFF,stock,Materials,large,False,False
+IP,stock,Materials,large,False,False
+INTU,stock,Information Technology,large,False,False
+ISRG,stock,Health Care,large,False,False
+IVZ,stock,Financials,large,False,False
+INVH,stock,Real Estate,large,False,False
+IQV,stock,Health Care,large,False,False
+IRM,stock,Real Estate,large,False,False
+JBHT,stock,Industrials,large,False,False
+JBL,stock,Information Technology,large,False,False
+JKHY,stock,Financials,large,False,False
+J,stock,Industrials,large,False,False
+JNJ,stock,Health Care,large,False,False
+JCI,stock,Industrials,large,False,False
+JPM,stock,Financials,large,False,False
+KDP,stock,Consumer Staples,large,False,False
+KEY,stock,Financials,large,False,False
+KEYS,stock,Information Technology,large,False,False
+KMB,stock,Consumer Staples,large,False,False
+KIM,stock,Real Estate,large,False,False
+KMI,stock,Energy,large,False,False
+KKR,stock,Financials,large,False,False
+KLAC,stock,Information Technology,large,False,False
+KHC,stock,Consumer Staples,large,False,False
+KR,stock,Consumer Staples,large,False,False
+LHX,stock,Industrials,large,False,False
+LH,stock,Health Care,large,False,False
+LRCX,stock,Information Technology,large,False,False
+LVS,stock,Consumer Discretionary,large,False,False
+LDOS,stock,Industrials,large,False,False
+LEN,stock,Consumer Discretionary,large,False,False
+LII,stock,Industrials,large,False,False
+LLY,stock,Health Care,large,False,False
+LIN,stock,Materials,large,False,False
+LYV,stock,Communication Services,large,False,False
+LMT,stock,Industrials,large,False,False
+L,stock,Financials,large,False,False
+LOW,stock,Consumer Discretionary,large,False,False
+LULU,stock,Consumer Discretionary,large,False,False
+LITE,stock,Information Technology,large,False,False
+LYB,stock,Materials,large,False,False
+MTB,stock,Financials,large,False,False
+MPC,stock,Energy,large,False,False
+MAR,stock,Consumer Discretionary,large,False,False
+MRSH,stock,Financials,large,False,False
+MLM,stock,Materials,large,False,False
+MRVL,stock,Information Technology,large,False,False
+MAS,stock,Industrials,large,False,False
+MA,stock,Financials,large,False,False
+MKC,stock,Consumer Staples,large,False,False
+MCD,stock,Consumer Discretionary,large,False,False
+MCK,stock,Health Care,large,False,False
+MDT,stock,Health Care,large,False,False
+MRK,stock,Health Care,large,False,False
+META,stock,Communication Services,large,False,False
+MET,stock,Financials,large,False,False
+MTD,stock,Health Care,large,False,False
+MGM,stock,Consumer Discretionary,large,False,False
+MCHP,stock,Information Technology,large,False,False
+MU,stock,Information Technology,large,False,False
+MSFT,stock,Information Technology,large,False,False
+MAA,stock,Real Estate,large,False,False
+MRNA,stock,Health Care,large,False,False
+MDLZ,stock,Consumer Staples,large,False,False
+MPWR,stock,Information Technology,large,False,False
+MNST,stock,Consumer Staples,large,False,False
+MCO,stock,Financials,large,False,False
+MS,stock,Financials,large,False,False
+MOS,stock,Materials,large,False,False
+MSI,stock,Information Technology,large,False,False
+MSCI,stock,Financials,large,False,False
+NDAQ,stock,Financials,large,False,False
+NTAP,stock,Information Technology,large,False,False
+NFLX,stock,Communication Services,large,False,False
+NEM,stock,Materials,large,False,False
+NWSA,stock,Communication Services,large,False,False
+NWS,stock,Communication Services,large,False,False
+NEE,stock,Utilities,large,False,False
+NKE,stock,Consumer Discretionary,large,False,False
+NI,stock,Utilities,large,False,False
+NDSN,stock,Industrials,large,False,False
+NSC,stock,Industrials,large,False,False
+NTRS,stock,Financials,large,False,False
+NOC,stock,Industrials,large,False,False
+NCLH,stock,Consumer Discretionary,large,False,False
+NRG,stock,Utilities,large,False,False
+NUE,stock,Materials,large,False,False
+NVDA,stock,Information Technology,large,False,False
+NVR,stock,Consumer Discretionary,large,False,False
+NXPI,stock,Information Technology,large,False,False
+ORLY,stock,Consumer Discretionary,large,False,False
+OXY,stock,Energy,large,False,False
+OKTA,stock,Information Technology,large,False,False
+ODFL,stock,Industrials,large,False,False
+OMC,stock,Communication Services,large,False,False
+ON,stock,Information Technology,large,False,False
+OKE,stock,Energy,large,False,False
+ORCL,stock,Information Technology,large,False,False
+OTIS,stock,Industrials,large,False,False
+PCAR,stock,Industrials,large,False,False
+PKG,stock,Materials,large,False,False
+PLTR,stock,Information Technology,large,False,False
+PANW,stock,Information Technology,large,False,False
+PH,stock,Industrials,large,False,False
+PAYX,stock,Industrials,large,False,False
+PYPL,stock,Financials,large,False,False
+PNR,stock,Industrials,large,False,False
+PEP,stock,Consumer Staples,large,False,False
+PFE,stock,Health Care,large,False,False
+PCG,stock,Utilities,large,False,False
+PM,stock,Consumer Staples,large,False,False
+PSX,stock,Energy,large,False,False
+PNW,stock,Utilities,large,False,False
+PNC,stock,Financials,large,False,False
+PPG,stock,Materials,large,False,False
+PPL,stock,Utilities,large,False,False
+PFG,stock,Financials,large,False,False
+PG,stock,Consumer Staples,large,False,False
+PGR,stock,Financials,large,False,False
+PLD,stock,Real Estate,large,False,False
+PRU,stock,Financials,large,False,False
+PTC,stock,Information Technology,large,False,False
+PEG,stock,Utilities,large,False,False
+PSA,stock,Real Estate,large,False,False
+PHM,stock,Consumer Discretionary,large,False,False
+Q,stock,Information Technology,large,False,False
+QCOM,stock,Information Technology,large,False,False
+PWR,stock,Industrials,large,False,False
+DGX,stock,Health Care,large,False,False
+RL,stock,Consumer Discretionary,large,False,False
+RJF,stock,Financials,large,False,False
+RDDT,stock,Communication Services,large,False,False
+O,stock,Real Estate,large,False,False
+REG,stock,Real Estate,large,False,False
+REGN,stock,Health Care,large,False,False
+RF,stock,Financials,large,False,False
+RSG,stock,Industrials,large,False,False
+RMD,stock,Health Care,large,False,False
+RVTY,stock,Health Care,large,False,False
+HOOD,stock,Financials,large,False,False
+ROK,stock,Industrials,large,False,False
+ROL,stock,Industrials,large,False,False
+ROP,stock,Information Technology,large,False,False
+ROST,stock,Consumer Discretionary,large,False,False
+RCL,stock,Consumer Discretionary,large,False,False
+RTX,stock,Industrials,large,False,False
+SPGI,stock,Financials,large,False,False
+CRM,stock,Information Technology,large,False,False
+SNDK,stock,Information Technology,large,False,False
+SBAC,stock,Real Estate,large,False,False
+SLB,stock,Energy,large,False,False
+STX,stock,Information Technology,large,False,False
+SRE,stock,Utilities,large,False,False
+NOW,stock,Information Technology,large,False,False
+SHW,stock,Materials,large,False,False
+SPG,stock,Real Estate,large,False,False
+SKYD,stock,Communication Services,large,False,False
+SWKS,stock,Information Technology,large,False,False
+SJM,stock,Consumer Staples,large,False,False
+SW,stock,Materials,large,False,False
+SNA,stock,Industrials,large,False,False
+SOLV,stock,Health Care,large,False,False
+SO,stock,Utilities,large,False,False
+LUV,stock,Industrials,large,False,False
+SWK,stock,Industrials,large,False,False
+SBUX,stock,Consumer Discretionary,large,False,False
+STT,stock,Financials,large,False,False
+STLD,stock,Materials,large,False,False
+STE,stock,Health Care,large,False,False
+SYK,stock,Health Care,large,False,False
+SMCI,stock,Information Technology,large,False,False
+SYF,stock,Financials,large,False,False
+SNPS,stock,Information Technology,large,False,False
+SYY,stock,Consumer Staples,large,False,False
+TMUS,stock,Communication Services,large,False,False
+TROW,stock,Financials,large,False,False
+TTWO,stock,Communication Services,large,False,False
+TPR,stock,Consumer Discretionary,large,False,False
+TRGP,stock,Energy,large,False,False
+TGT,stock,Consumer Staples,large,False,False
+TEL,stock,Information Technology,large,False,False
+TDY,stock,Information Technology,large,False,False
+TER,stock,Information Technology,large,False,False
+TSLA,stock,Consumer Discretionary,large,False,False
+TXN,stock,Information Technology,large,False,False
+TPL,stock,Energy,large,False,False
+TXT,stock,Industrials,large,False,False
+TMO,stock,Health Care,large,False,False
+TJX,stock,Consumer Discretionary,large,False,False
+TKO,stock,Communication Services,large,False,False
+TSCO,stock,Consumer Discretionary,large,False,False
+TT,stock,Industrials,large,False,False
+TDG,stock,Industrials,large,False,False
+TRV,stock,Financials,large,False,False
+TRMB,stock,Information Technology,large,False,False
+TFC,stock,Financials,large,False,False
+TWLO,stock,Information Technology,large,False,False
+TYL,stock,Information Technology,large,False,False
+TSN,stock,Consumer Staples,large,False,False
+USB,stock,Financials,large,False,False
+UBER,stock,Industrials,large,False,False
+UDR,stock,Real Estate,large,False,False
+ULTA,stock,Consumer Discretionary,large,False,False
+UNP,stock,Industrials,large,False,False
+UAL,stock,Industrials,large,False,False
+UPS,stock,Industrials,large,False,False
+URI,stock,Industrials,large,False,False
+UNH,stock,Health Care,large,False,False
+UHS,stock,Health Care,large,False,False
+VLO,stock,Energy,large,False,False
+VEEV,stock,Health Care,large,False,False
+VTR,stock,Real Estate,large,False,False
+VLTO,stock,Industrials,large,False,False
+VRSN,stock,Information Technology,large,False,False
+VRSK,stock,Industrials,large,False,False
+VZ,stock,Communication Services,large,False,False
+VRTX,stock,Health Care,large,False,False
+VRT,stock,Industrials,large,False,False
+VTRS,stock,Health Care,large,False,False
+VICI,stock,Real Estate,large,False,False
+V,stock,Financials,large,False,False
+VST,stock,Utilities,large,False,False
+VMRK,stock,Real Estate,large,False,False
+VMC,stock,Materials,large,False,False
+VYLR,stock,Consumer Staples,large,False,False
+WRB,stock,Financials,large,False,False
+GWW,stock,Industrials,large,False,False
+WAB,stock,Industrials,large,False,False
+WMT,stock,Consumer Staples,large,False,False
+DIS,stock,Communication Services,large,False,False
+WM,stock,Industrials,large,False,False
+WAT,stock,Health Care,large,False,False
+WEC,stock,Utilities,large,False,False
+WFC,stock,Financials,large,False,False
+WELL,stock,Real Estate,large,False,False
+WST,stock,Health Care,large,False,False
+WDC,stock,Information Technology,large,False,False
+WY,stock,Real Estate,large,False,False
+WSM,stock,Consumer Discretionary,large,False,False
+WMB,stock,Energy,large,False,False
+WTW,stock,Financials,large,False,False
+WDAY,stock,Information Technology,large,False,False
+WYNN,stock,Consumer Discretionary,large,False,False
+XEL,stock,Utilities,large,False,False
+XYL,stock,Industrials,large,False,False
+YUM,stock,Consumer Discretionary,large,False,False
+ZBRA,stock,Information Technology,large,False,False
+ZBH,stock,Health Care,large,False,False
+ZTS,stock,Health Care,large,False,False
+AA,stock,Materials,mid,False,False
+AAL,stock,Industrials,mid,False,False
+AAON,stock,Industrials,mid,False,False
+ACI,stock,Consumer Staples,mid,False,False
+ACM,stock,Industrials,mid,False,False
+ADC,stock,Real Estate,mid,False,False
+AEIS,stock,Information Technology,mid,False,False
+AFG,stock,Financials,mid,False,False
+AGCO,stock,Industrials,mid,False,False
+AGNC,stock,Financials,mid,False,False
+AHR,stock,Real Estate,mid,False,False
+AIT,stock,Industrials,mid,False,False
+ALGM,stock,Information Technology,mid,False,False
+ALK,stock,Industrials,mid,False,False
+ALLY,stock,Financials,mid,False,False
+ALSN,stock,Industrials,mid,False,False
+ALV,stock,Consumer Discretionary,mid,False,False
+AM,stock,Energy,mid,False,False
+AMG,stock,Financials,mid,False,False
+AMH,stock,Real Estate,mid,False,False
+AMKR,stock,Information Technology,mid,False,False
+AN,stock,Consumer Discretionary,mid,False,False
+ANF,stock,Consumer Discretionary,mid,False,False
+APG,stock,Industrials,mid,False,False
+APPF,stock,Information Technology,mid,False,False
+AR,stock,Energy,mid,False,False
+ARMK,stock,Consumer Discretionary,mid,False,False
+ARW,stock,Information Technology,mid,False,False
+ARWR,stock,Health Care,mid,False,False
+ASB,stock,Financials,mid,False,False
+ASH,stock,Materials,mid,False,False
+ATI,stock,Industrials,mid,False,False
+ATR,stock,Materials,mid,False,False
+AVAV,stock,Industrials,mid,False,False
+AVNT,stock,Materials,mid,False,False
+AVT,stock,Information Technology,mid,False,False
+AVTR,stock,Health Care,mid,False,False
+AXTA,stock,Materials,mid,False,False
+AYI,stock,Industrials,mid,False,False
+BAH,stock,Industrials,mid,False,False
+BBWI,stock,Consumer Discretionary,mid,False,False
+BC,stock,Consumer Discretionary,mid,False,False
+BCO,stock,Industrials,mid,False,False
+BDC,stock,Information Technology,mid,False,False
+BHF,stock,Financials,mid,False,False
+BILL,stock,Information Technology,mid,False,False
+BIO,stock,Health Care,mid,False,False
+BJ,stock,Consumer Staples,mid,False,False
+BMRN,stock,Health Care,mid,False,False
+BRKR,stock,Health Care,mid,False,False
+BROS,stock,Consumer Discretionary,mid,False,False
+BRX,stock,Real Estate,mid,False,False
+BSY,stock,Information Technology,mid,False,False
+BTSG,stock,Health Care,mid,False,False
+BURL,stock,Consumer Discretionary,mid,False,False
+BWA,stock,Consumer Discretionary,mid,False,False
+BWXT,stock,Industrials,mid,False,False
+BYD,stock,Consumer Discretionary,mid,False,False
+CACI,stock,Industrials,mid,False,False
+CAR,stock,Industrials,mid,False,False
+CART,stock,Consumer Staples,mid,False,False
+CAVA,stock,Consumer Discretionary,mid,False,False
+CBSH,stock,Financials,mid,False,False
+CBT,stock,Materials,mid,False,False
+CCK,stock,Materials,mid,False,False
+CDE,stock,Materials,mid,False,False
+CDP,stock,Real Estate,mid,False,False
+CELH,stock,Consumer Staples,mid,False,False
+CFR,stock,Financials,mid,False,False
+CG,stock,Financials,mid,False,False
+CGNX,stock,Information Technology,mid,False,False
+CHDN,stock,Consumer Discretionary,mid,False,False
+CHE,stock,Health Care,mid,False,False
+CHH,stock,Consumer Discretionary,mid,False,False
+CHRD,stock,Energy,mid,False,False
+CHWY,stock,Consumer Discretionary,mid,False,False
+CHYM,stock,Financials,mid,False,False
+CLF,stock,Materials,mid,False,False
+CLH,stock,Industrials,mid,False,False
+CMC,stock,Materials,mid,False,False
+CNH,stock,Industrials,mid,False,False
+CNM,stock,Industrials,mid,False,False
+CNO,stock,Financials,mid,False,False
+CNX,stock,Energy,mid,False,False
+COKE,stock,Consumer Staples,mid,False,False
+COLB,stock,Financials,mid,False,False
+COLM,stock,Consumer Discretionary,mid,False,False
+CORT,stock,Health Care,mid,False,False
+CR,stock,Industrials,mid,False,False
+CRBG,stock,Financials,mid,False,False
+CROX,stock,Consumer Discretionary,mid,False,False
+CRS,stock,Industrials,mid,False,False
+CRUS,stock,Information Technology,mid,False,False
+CSL,stock,Industrials,mid,False,False
+CTRE,stock,Real Estate,mid,False,False
+CTVA,stock,Materials,mid,False,False
+CUBE,stock,Real Estate,mid,False,False
+CUZ,stock,Real Estate,mid,False,False
+CVLT,stock,Information Technology,mid,False,False
+CW,stock,Industrials,mid,False,False
+CXT,stock,Information Technology,mid,False,False
+CYTK,stock,Health Care,mid,False,False
+DAR,stock,Consumer Staples,mid,False,False
+DBX,stock,Information Technology,mid,False,False
+DCI,stock,Industrials,mid,False,False
+DINO,stock,Energy,mid,False,False
+DKS,stock,Consumer Discretionary,mid,False,False
+DLB,stock,Information Technology,mid,False,False
+DOCN,stock,Information Technology,mid,False,False
+DOCS,stock,Health Care,mid,False,False
+DOCU,stock,Information Technology,mid,False,False
+DT,stock,Information Technology,mid,False,False
+DTM,stock,Energy,mid,False,False
+DUOL,stock,Consumer Discretionary,mid,False,False
+DY,stock,Industrials,mid,False,False
+EAT,stock,Consumer Discretionary,mid,False,False
+EEFT,stock,Financials,mid,False,False
+EGP,stock,Real Estate,mid,False,False
+EHC,stock,Health Care,mid,False,False
+ELAN,stock,Health Care,mid,False,False
+ELF,stock,Consumer Staples,mid,False,False
+ELS,stock,Real Estate,mid,False,False
+ENS,stock,Industrials,mid,False,False
+ENSG,stock,Health Care,mid,False,False
+ENTG,stock,Information Technology,mid,False,False
+EPR,stock,Real Estate,mid,False,False
+EQH,stock,Financials,mid,False,False
+ESAB,stock,Industrials,mid,False,False
+ESNT,stock,Financials,mid,False,False
+EVR,stock,Financials,mid,False,False
+EWBC,stock,Financials,mid,False,False
+EXEL,stock,Health Care,mid,False,False
+EXLS,stock,Industrials,mid,False,False
+EXP,stock,Materials,mid,False,False
+EXPO,stock,Industrials,mid,False,False
+FAF,stock,Financials,mid,False,False
+FBIN,stock,Industrials,mid,False,False
+FCFS,stock,Financials,mid,False,False
+FCN,stock,Industrials,mid,False,False
+FFIN,stock,Financials,mid,False,False
+FHI,stock,Financials,mid,False,False
+FHN,stock,Financials,mid,False,False
+FIVE,stock,Consumer Discretionary,mid,False,False
+FLG,stock,Financials,mid,False,False
+FLR,stock,Industrials,mid,False,False
+FLS,stock,Industrials,mid,False,False
+FN,stock,Information Technology,mid,False,False
+FNB,stock,Financials,mid,False,False
+FND,stock,Consumer Discretionary,mid,False,False
+FNF,stock,Financials,mid,False,False
+FORM,stock,Information Technology,mid,False,False
+FOUR,stock,Financials,mid,False,False
+FR,stock,Real Estate,mid,False,False
+FTI,stock,Energy,mid,False,False
+G,stock,Industrials,mid,False,False
+GAP,stock,Consumer Discretionary,mid,False,False
+GATX,stock,Industrials,mid,False,False
+GBCI,stock,Financials,mid,False,False
+GEF,stock,Materials,mid,False,False
+GGG,stock,Industrials,mid,False,False
+GHC,stock,Consumer Discretionary,mid,False,False
+GKOS,stock,Health Care,mid,False,False
+GLPI,stock,Real Estate,mid,False,False
+GME,stock,Consumer Discretionary,mid,False,False
+GMED,stock,Health Care,mid,False,False
+GNTX,stock,Consumer Discretionary,mid,False,False
+GPK,stock,Materials,mid,False,False
+GWRE,stock,Information Technology,mid,False,False
+GXO,stock,Industrials,mid,False,False
+H,stock,Consumer Discretionary,mid,False,False
+HAE,stock,Health Care,mid,False,False
+HALO,stock,Health Care,mid,False,False
+HGV,stock,Consumer Discretionary,mid,False,False
+HIMS,stock,Health Care,mid,False,False
+HL,stock,Materials,mid,False,False
+HLI,stock,Financials,mid,False,False
+HLNE,stock,Financials,mid,False,False
+HOG,stock,Consumer Discretionary,mid,False,False
+HOMB,stock,Financials,mid,False,False
+HQY,stock,Health Care,mid,False,False
+HR,stock,Real Estate,mid,False,False
+HRB,stock,Consumer Discretionary,mid,False,False
+HUBS,stock,Information Technology,mid,False,False
+HWC,stock,Financials,mid,False,False
+HXL,stock,Industrials,mid,False,False
+HZN,stock,Utilities,mid,False,False
+IBOC,stock,Financials,mid,False,False
+IDA,stock,Utilities,mid,False,False
+IDCC,stock,Information Technology,mid,False,False
+IESC,stock,Industrials,mid,False,False
+INGR,stock,Consumer Staples,mid,False,False
+IPGP,stock,Information Technology,mid,False,False
+IRT,stock,Real Estate,mid,False,False
+ITT,stock,Industrials,mid,False,False
+JAZZ,stock,Health Care,mid,False,False
+JEF,stock,Financials,mid,False,False
+JHX,stock,Materials,mid,False,False
+JLL,stock,Real Estate,mid,False,False
+KBH,stock,Consumer Discretionary,mid,False,False
+KBR,stock,Industrials,mid,False,False
+KD,stock,Information Technology,mid,False,False
+KEX,stock,Industrials,mid,False,False
+KNF,stock,Materials,mid,False,False
+KNSL,stock,Financials,mid,False,False
+KNX,stock,Industrials,mid,False,False
+KRC,stock,Real Estate,mid,False,False
+KRG,stock,Real Estate,mid,False,False
+KRYS,stock,Health Care,mid,False,False
+KTOS,stock,Industrials,mid,False,False
+LAD,stock,Consumer Discretionary,mid,False,False
+LAMR,stock,Real Estate,mid,False,False
+LEA,stock,Consumer Discretionary,mid,False,False
+LECO,stock,Industrials,mid,False,False
+LFUS,stock,Information Technology,mid,False,False
+LIVN,stock,Health Care,mid,False,False
+LNTH,stock,Health Care,mid,False,False
+LOPE,stock,Consumer Discretionary,mid,False,False
+LPX,stock,Industrials,mid,False,False
+LSCC,stock,Information Technology,mid,False,False
+LSTR,stock,Industrials,mid,False,False
+M,stock,Consumer Discretionary,mid,False,False
+MANH,stock,Information Technology,mid,False,False
+MAT,stock,Consumer Discretionary,mid,False,False
+MEDP,stock,Health Care,mid,False,False
+MIDD,stock,Industrials,mid,False,False
+MKSI,stock,Information Technology,mid,False,False
+MLI,stock,Industrials,mid,False,False
+MMS,stock,Industrials,mid,False,False
+MOG-A,stock,Industrials,mid,False,False
+MOH,stock,Health Care,mid,False,False
+MORN,stock,Financials,mid,False,False
+MP,stock,Materials,mid,False,False
+MSA,stock,Industrials,mid,False,False
+MSM,stock,Industrials,mid,False,False
+MTDR,stock,Energy,mid,False,False
+MTG,stock,Financials,mid,False,False
+MTN,stock,Consumer Discretionary,mid,False,False
+MTSI,stock,Information Technology,mid,False,False
+MTZ,stock,Industrials,mid,False,False
+MUR,stock,Energy,mid,False,False
+MUSA,stock,Consumer Discretionary,mid,False,False
+MZTI,stock,Consumer Staples,mid,False,False
+NBIX,stock,Health Care,mid,False,False
+NEU,stock,Materials,mid,False,False
+NFG,stock,Utilities,mid,False,False
+NJR,stock,Utilities,mid,False,False
+NLY,stock,Financials,mid,False,False
+NNN,stock,Real Estate,mid,False,False
+NOV,stock,Energy,mid,False,False
+NOVT,stock,Information Technology,mid,False,False
+NTNX,stock,Information Technology,mid,False,False
+NVST,stock,Health Care,mid,False,False
+NVT,stock,Industrials,mid,False,False
+NXST,stock,Communication Services,mid,False,False
+NXT,stock,Industrials,mid,False,False
+NYT,stock,Communication Services,mid,False,False
+OC,stock,Industrials,mid,False,False
+OGE,stock,Utilities,mid,False,False
+OGS,stock,Utilities,mid,False,False
+OHI,stock,Real Estate,mid,False,False
+OLED,stock,Information Technology,mid,False,False
+OLLI,stock,Consumer Discretionary,mid,False,False
+ONB,stock,Financials,mid,False,False
+ONTO,stock,Information Technology,mid,False,False
+OPCH,stock,Health Care,mid,False,False
+ORA,stock,Utilities,mid,False,False
+ORI,stock,Financials,mid,False,False
+OSK,stock,Industrials,mid,False,False
+OVV,stock,Energy,mid,False,False
+OZK,stock,Financials,mid,False,False
+PAG,stock,Consumer Discretionary,mid,False,False
+PATH,stock,Information Technology,mid,False,False
+PB,stock,Financials,mid,False,False
+PBF,stock,Energy,mid,False,False
+PCTY,stock,Industrials,mid,False,False
+PEGA,stock,Information Technology,mid,False,False
+PEN,stock,Health Care,mid,False,False
+PFGC,stock,Consumer Staples,mid,False,False
+PII,stock,Consumer Discretionary,mid,False,False
+PINS,stock,Communication Services,mid,False,False
+PK,stock,Real Estate,mid,False,False
+PLNT,stock,Consumer Discretionary,mid,False,False
+PNFP,stock,Financials,mid,False,False
+POR,stock,Utilities,mid,False,False
+POST,stock,Consumer Staples,mid,False,False
+PPC,stock,Consumer Staples,mid,False,False
+PR,stock,Energy,mid,False,False
+PRI,stock,Financials,mid,False,False
+PSN,stock,Industrials,mid,False,False
+PVH,stock,Consumer Discretionary,mid,False,False
+QLYS,stock,Information Technology,mid,False,False
+R,stock,Industrials,mid,False,False
+RBA,stock,Industrials,mid,False,False
+RBC,stock,Industrials,mid,False,False
+REXR,stock,Real Estate,mid,False,False
+RGA,stock,Financials,mid,False,False
+RGEN,stock,Health Care,mid,False,False
+RGLD,stock,Materials,mid,False,False
+RH,stock,Consumer Discretionary,mid,False,False
+RLI,stock,Financials,mid,False,False
+RMBS,stock,Information Technology,mid,False,False
+RNR,stock,Financials,mid,False,False
+ROIV,stock,Health Care,mid,False,False
+RPM,stock,Materials,mid,False,False
+RRC,stock,Energy,mid,False,False
+RRX,stock,Industrials,mid,False,False
+RS,stock,Materials,mid,False,False
+RYAN,stock,Financials,mid,False,False
+RYN,stock,Real Estate,mid,False,False
+SAIA,stock,Industrials,mid,False,False
+SAIC,stock,Industrials,mid,False,False
+SANM,stock,Information Technology,mid,False,False
+SARO,stock,Industrials,mid,False,False
+SBRA,stock,Real Estate,mid,False,False
+SCI,stock,Consumer Discretionary,mid,False,False
+SEIC,stock,Financials,mid,False,False
+SF,stock,Financials,mid,False,False
+SFM,stock,Consumer Staples,mid,False,False
+SGI,stock,Consumer Discretionary,mid,False,False
+SHC,stock,Health Care,mid,False,False
+SIGI,stock,Financials,mid,False,False
+SIRI,stock,Communication Services,mid,False,False
+SITM,stock,Information Technology,mid,False,False
+SLAB,stock,Information Technology,mid,False,False
+SLGN,stock,Materials,mid,False,False
+SLM,stock,Financials,mid,False,False
+SMG,stock,Materials,mid,False,False
+SMTC,stock,Information Technology,mid,False,False
+SN,stock,Consumer Discretionary,mid,False,False
+SNX,stock,Information Technology,mid,False,False
+SOLS,stock,Materials,mid,False,False
+SON,stock,Materials,mid,False,False
+SPXC,stock,Industrials,mid,False,False
+SR,stock,Utilities,mid,False,False
+SSB,stock,Financials,mid,False,False
+SSD,stock,Industrials,mid,False,False
+ST,stock,Industrials,mid,False,False
+STAG,stock,Real Estate,mid,False,False
+STRL,stock,Industrials,mid,False,False
+STWD,stock,Financials,mid,False,False
+SUI,stock,Real Estate,mid,False,False
+SWX,stock,Utilities,mid,False,False
+SYNA,stock,Information Technology,mid,False,False
+TCBI,stock,Financials,mid,False,False
+TEX,stock,Industrials,mid,False,False
+THC,stock,Health Care,mid,False,False
+THG,stock,Financials,mid,False,False
+THO,stock,Consumer Discretionary,mid,False,False
+TKR,stock,Industrials,mid,False,False
+TLN,stock,Utilities,mid,False,False
+TNL,stock,Consumer Discretionary,mid,False,False
+TOL,stock,Consumer Discretionary,mid,False,False
+TOST,stock,Financials,mid,False,False
+TREX,stock,Industrials,mid,False,False
+TRU,stock,Industrials,mid,False,False
+TTC,stock,Industrials,mid,False,False
+TTEK,stock,Industrials,mid,False,False
+TTMI,stock,Information Technology,mid,False,False
+TXNM,stock,Utilities,mid,False,False
+TXRH,stock,Consumer Discretionary,mid,False,False
+UBSI,stock,Financials,mid,False,False
+UFPI,stock,Industrials,mid,False,False
+UGI,stock,Utilities,mid,False,False
+ULS,stock,Industrials,mid,False,False
+UMBF,stock,Financials,mid,False,False
+UNM,stock,Financials,mid,False,False
+USFD,stock,Consumer Staples,mid,False,False
+UTHR,stock,Health Care,mid,False,False
+VAL,stock,Energy,mid,False,False
+VC,stock,Consumer Discretionary,mid,False,False
+VFC,stock,Consumer Discretionary,mid,False,False
+VIAV,stock,Information Technology,mid,False,False
+VICR,stock,Industrials,mid,False,False
+VLY,stock,Financials,mid,False,False
+VMI,stock,Industrials,mid,False,False
+VNO,stock,Real Estate,mid,False,False
+VNOM,stock,Energy,mid,False,False
+VNT,stock,Information Technology,mid,False,False
+VOYA,stock,Financials,mid,False,False
+VVV,stock,Consumer Discretionary,mid,False,False
+WAL,stock,Financials,mid,False,False
+WCC,stock,Industrials,mid,False,False
+WEX,stock,Financials,mid,False,False
+WFRD,stock,Energy,mid,False,False
+WH,stock,Consumer Discretionary,mid,False,False
+WHR,stock,Consumer Discretionary,mid,False,False
+WING,stock,Consumer Discretionary,mid,False,False
+WLK,stock,Materials,mid,False,False
+WMG,stock,Communication Services,mid,False,False
+WMS,stock,Industrials,mid,False,False
+WPC,stock,Real Estate,mid,False,False
+WSO,stock,Industrials,mid,False,False
+WTFC,stock,Financials,mid,False,False
+WTRG,stock,Utilities,mid,False,False
+WTS,stock,Industrials,mid,False,False
+WWD,stock,Industrials,mid,False,False
+XPO,stock,Industrials,mid,False,False
+XRAY,stock,Health Care,mid,False,False
+YETI,stock,Consumer Discretionary,mid,False,False
+ZION,stock,Financials,mid,False,False
+SPY,stock,broad,etf,True,False
+QQQ,stock,broad,etf,True,False
+IWM,stock,broad,etf,True,False
+DIA,stock,broad,etf,True,False
+XLK,stock,tech,etf,True,False
+XLF,stock,financials,etf,True,False
+XLE,stock,energy,etf,True,False
+XLV,stock,health,etf,True,False
+XLI,stock,industrials,etf,True,False
+XLY,stock,discretionary,etf,True,False
+XLP,stock,staples,etf,True,False
+XLU,stock,utilities,etf,True,False
+XLB,stock,materials,etf,True,False
+XLRE,stock,realestate,etf,True,False
+XLC,stock,communication,etf,True,False
+GLD,stock,gold,etf,True,False
+TLT,stock,bonds,etf,True,False
+HYG,stock,bonds,etf,True,False
+EEM,stock,international,etf,True,False
+EFA,stock,international,etf,True,False

@@ -67,7 +67,7 @@ def add_verdicts(t: pd.DataFrame) -> pd.DataFrame:
     edge = t["edge_vs_all_days"].to_numpy(dtype="float64")
     mean = t["mean_all"].to_numpy(dtype="float64")
     sig = ~insuf & (q < SIG_Q)
-    v = np.select([insuf, sig & (edge > 0) & (mean > 0), sig & (edge < 0), sig & (edge > 0)],
+    v = np.select([insuf, sig & (edge > 0) & (mean > 0), sig & (edge < 0), sig & (edge > 0) & (mean <= 0)],
                   [VERDICTS[4], VERDICTS[0], VERDICTS[1], VERDICTS[2]], default=VERDICTS[3])
     pos = t.columns.get_loc("direction") + 1 if "direction" in t.columns else len(t.columns)
     t.insert(pos, "verdict", v)

@@ -167,6 +167,13 @@ def test_quality_count_filters_market():
     assert _quality_count(None, {"A"}, "stock") is None
 
 
+def test_verdict_nan_mean_is_not_loses_net():
+    from swingbot.report.build import add_verdicts
+    t = pd.DataFrame({"signal": ["x"], "insufficient": [False], "q": [0.01],
+                      "edge_vs_all_days": [0.002], "mean_all": [np.nan]})
+    assert add_verdicts(t)["verdict"].iloc[0] == "not significant"
+
+
 def test_rendered_verdicts_not_counted_as_hits(tmp_path):
     panels = {"stock": make_market_panel("stock", seed=1)}
     p = panels["stock"]
@@ -252,7 +259,7 @@ def test_heatmap_grey_for_not_significant(tmp_path):
     p.loc[p[strong], col] += 0.03
     html = build_report({"stock": p}, tmp_path / "r.html", as_of="2026-01-01").read_text(encoding="utf-8")
     assert ("Blue = signal beats same-day average, red = trails; grey = not significant (q ≥ 0.10); "
-            "blank = insufficient data. BH correction is per heatmap.") in html
+            "blank = insufficient data. BH correction is per market within each heatmap.") in html
     figs = _plotly_traces(html)
     assert len(figs) == 2
     for traces in figs:

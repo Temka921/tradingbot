@@ -35,12 +35,11 @@ def build_panel(market: str, allow_holdout: bool = False,
                 max_skip_frac: float | None = None) -> pd.DataFrame:
     """One long panel for ``market``.
 
-    Stock rows whose close at t is below ``config.MIN_STOCK_PRICE`` are dropped
-    (causal: known at the close of t; signals and outcomes are computed on the
-    full history first). Raises if more than ``max_skip_frac`` (default
+    No rows are dropped on price level (Yahoo closes are back-adjusted, so a low
+    adjusted price at t selects later winners). Raises if more than ``max_skip_frac`` (default
     ``config.MAX_SKIP_FRAC``) of the market's assets with a data file are skipped
     because of an error. Expected skips (excluded crypto base, no rows left after
-    dropping the pre-period / sub-$1 rows) do not count.
+    dropping the pre-period) do not count.
     """
     max_skip_frac = config.MAX_SKIP_FRAC if max_skip_frac is None else max_skip_frac
     meta = _eligible_assets(market)
@@ -49,7 +48,6 @@ def build_panel(market: str, allow_holdout: bool = False,
         raise ValueError(f"benchmark {bench_sym} missing from {market} data")
     failed: list[str] = []
     expected = 0
-    penny_rows = 0
 
     # Load every asset exactly once (one holdout-log entry per asset).
     bars: dict[str, pd.DataFrame] = {}
@@ -83,12 +81,8 @@ def build_panel(market: str, allow_holdout: bool = False,
             part["market"] = market
             part["split"] = store.split_of(df.index, market)
             part = part[part["split"] != "pre"]
-            if market == "stock":
-                low = (df["close"] < config.MIN_STOCK_PRICE).reindex(part.index).to_numpy(dtype=bool)
-                penny_rows += int(low.sum())
-                part = part[~low]
             if part.empty:
-                _skip(r.symbol, "no rows after dropping pre-period / sub-$1 rows")
+                _skip(r.symbol, "no rows after dropping pre-period")
                 expected += 1
                 continue
             f64 = part.select_dtypes("float64").columns
@@ -99,8 +93,6 @@ def build_panel(market: str, allow_holdout: bool = False,
             failed.append(r.symbol)
     n_assets = len(meta)
     msg = f"{market}: {len(failed)} of {n_assets} assets skipped for errors, {expected} expected skips"
-    if market == "stock":
-        msg += f"; {penny_rows} stock rows dropped with close < ${config.MIN_STOCK_PRICE:g}"
     print(msg)
     if n_assets and len(failed) / n_assets > max_skip_frac:
         raise ValueError(f"{len(failed)} of {n_assets} {market} assets ({len(failed) / n_assets:.1%}) "
@@ -114,5 +106,5 @@ def build_panel(market: str, allow_holdout: bool = False,
     for c in CATEGORICAL:
         out[c] = out[c].astype("category")
     out.attrs["build_stats"] = {"assets_attempted": n_assets, "skipped_errors": len(failed),
-                                "skipped_expected": expected, "penny_rows_dropped": penny_rows}
+                                "skipped_expected": expected}
     return out

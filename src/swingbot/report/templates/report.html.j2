@@ -32,7 +32,7 @@
 </ul></div>
 
 <h2>1. Data coverage</h2>
-<p>Assets and rows exclude ETFs (counted separately). Quality issues = distinct assets with at least one flagged data issue. Clip bounds: before any statistic, each outcome is clipped at the 0.1 and 99.9 percentiles pooled over that market's discovery rows (signal rows and baseline alike), so one bad data splice cannot dominate a day's mean. Stock rows with a close below $1 are dropped when the panel is built.</p>
+<p>Assets and rows exclude ETFs (counted separately). Quality issues = distinct assets with at least one flagged data issue. Clip bounds: before any statistic, each outcome is clipped at the 0.1 and 99.9 percentiles pooled over that market's discovery rows (signal rows and baseline alike), so one bad data splice cannot dominate a day's mean.</p>
 <div class="scroll"><table><tr><th>Market</th><th>Assets (ex-ETF)</th><th>ETFs</th><th>Rows (ex-ETF)</th><th>Discovery rows</th><th>First date</th><th>Last date</th><th>Quality issues</th><th>Clip bounds ({{ horizon }}-day outcome)</th></tr>
 {% for c in coverage %}<tr><td>{{ c.market }}</td><td>{{ c.assets }}</td><td>{{ c.etfs }}</td><td>{{ c.rows }}</td><td>{{ c.disc_rows }}</td><td>{{ c.start }}</td><td>{{ c.end }}</td><td>{{ c.issues }}</td><td>{{ c.clip }}</td></tr>
 {% endfor %}</table></div>
@@ -56,7 +56,7 @@
 {% endfor %}
 
 <h2>3. Heatmaps: edge vs same-day average (bps)</h2>
-<p>Blue = signal beats same-day average, red = trails; grey = not significant (q ≥ 0.10); blank = insufficient data. BH correction is per heatmap. Cell colour is the edge tested by p/q, not the raw mean; hover shows n, dates, edge, mean excess, t and q.</p>
+<p>Blue = signal beats same-day average, red = trails; grey = not significant (q ≥ 0.10); blank = insufficient data. BH correction is per market within each heatmap. Cell colour is the edge tested by p/q, not the raw mean; hover shows n, dates, edge, mean excess, t and q.</p>
 <div class="plot">{{ heat_trend|safe }}</div>
 <div class="plot">{{ heat_vol|safe }}</div>
 

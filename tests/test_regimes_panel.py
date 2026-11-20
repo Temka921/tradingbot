@@ -219,20 +219,20 @@ def test_build_panel_short_history_asset_included(capsys):
     assert "SKIP NEW" not in capsys.readouterr().out
 
 
-def test_stock_rows_under_one_dollar_dropped(capsys):
+def test_build_panel_keeps_low_priced_stock_rows(capsys):
+    """No price-level filter: adjusted closes are back-adjusted, so 'cheap at t' selects later winners."""
     _stock_setup([("PEN", "stock", "Tech", "small", False, False)])
-    close = np.concatenate([np.full(400, 0.5), np.full(1100, 5.0)]) * np.exp(
+    close = np.concatenate([np.full(400, 0.05), np.full(1100, 5.0)]) * np.exp(
         np.random.default_rng(3).normal(0, 0.001, 1500))
     pen = bars_from_close(close, start="2016-01-01")
     store.save_bars("PEN", "stock", pen)
     out = panel.build_panel("stock")
+    exp = pen[pen.index < pd.Timestamp(config.HOLDOUT_START)]
+    exp = exp[store.split_of(exp.index, "stock") != "pre"]
     got = out[out["asset"] == "PEN"]
-    keep = pen[(pen.index < pd.Timestamp(config.HOLDOUT_START)) & (pen["close"] >= 1.0)]
-    keep = keep[store.split_of(keep.index, "stock") != "pre"]
-    assert len(got) == len(keep) > 0
-    assert got["date"].min() == keep.index.min()
-    # signals and outcomes were computed on the full history, before the drop (causal mask only)
-    assert "400 stock rows dropped with close < $1" in capsys.readouterr().out
+    assert len(got) == len(exp)
+    assert got["date"].min() == exp.index.min()
+    assert "dropped" not in capsys.readouterr().out
 
 
 def test_crypto_rows_under_one_dollar_kept():

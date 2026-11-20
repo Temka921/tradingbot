@@ -3,7 +3,7 @@ import pandas as pd
 import pytest
 
 from swingbot import config
-from swingbot.data import binance, universe, yahoo
+from swingbot.data import binance, download, universe, yahoo
 from swingbot.data.download import run
 from swingbot.data.quality import check_bars
 from swingbot.data.universe import AssetMeta
@@ -74,6 +74,9 @@ def test_crypto_universe_filters(monkeypatch, tmp_path):
         {"symbol": "BTCUPUSDT", "quoteVolume": "8e9"},
         {"symbol": "ETHBTC", "quoteVolume": "7e9"},
         {"symbol": "BTCUSDT", "quoteVolume": "6e9"},
+        {"symbol": "USD1USDT", "quoteVolume": "5e9"},
+        {"symbol": "PYUSDUSDT", "quoteVolume": "4e9"},
+        {"symbol": "XUSDUSDT", "quoteVolume": "3e9"},
     ]
     monkeypatch.setattr(universe.requests, "get", lambda *a, **k: FakeResp(tickers))
     out = universe.crypto_universe(60)
@@ -120,6 +123,7 @@ def test_check_bars_other_flags():
 
 
 def test_download_skips_failures(monkeypatch, tmp_path):
+    monkeypatch.setattr(download, "_sleep", lambda s: None)
     monkeypatch.setattr(config, "DATA_DIR", tmp_path)
     assets = [AssetMeta(s, "stock", "tech", "large", False, False) for s in ("GOOD", "BOOM", "EMPTY")]
     good = _bars(pd.bdate_range("2020-01-01", periods=30))
@@ -137,3 +141,60 @@ def test_download_skips_failures(monkeypatch, tmp_path):
     assert (tmp_path / "raw" / "stock" / "GOOD.parquet").exists()
     assert not (tmp_path / "raw" / "stock" / "BOOM.parquet").exists()
     assert (tmp_path / "quality_report.csv").exists()
+
+
+def test_with_benchmark_always_included():
+    a = [AssetMeta(s, "stock", "x", "large", False, False) for s in ("AAA", "BBB", "SPY", "CCC")]
+    out = universe.with_benchmark(a, "stock", 2)
+    assert [x.symbol for x in out] == ["SPY", "AAA", "BBB"]
+    c = [AssetMeta("ETHUSDT", "crypto", "crypto", "major", False, True),
+         AssetMeta("BTCUSDT", "crypto", "crypto", "major", False, True)]
+    assert universe.with_benchmark(c, "crypto", 1)[0].symbol == "BTCUSDT"
+    with pytest.raises(ValueError):
+        universe.with_benchmark(c[:1], "crypto", 1)
+
+
+def test_reports_upsert_across_runs(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    good = _bars(pd.bdate_range("2020-01-01", periods=30))
+    s = AssetMeta("AAA", "stock", "tech", "large", False, False)
+    c = AssetMeta("BTCUSDT", "crypto", "crypto", "major", False, True)
+    run([s], lambda a: good)
+    run([c], lambda a: good)
+    meta = pd.read_parquet(tmp_path / "universe_meta.parquet")
+    assert set(meta["symbol"]) == {"AAA", "BTCUSDT"}
+    assert set(pd.read_csv(tmp_path / "quality_report.csv")["symbol"]) == {"AAA", "BTCUSDT"}
+
+
+def test_save_failure_skips_and_reports_written(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    good = _bars(pd.bdate_range("2020-01-01", periods=30))
+    real = download.store.save_bars
+
+    def bad_save(sym, market, df):
+        if sym == "BAD":
+            raise OSError("disk")
+        return real(sym, market, df)
+
+    monkeypatch.setattr(download.store, "save_bars", bad_save)
+    assets = [AssetMeta(s, "stock", "t", "large", False, False) for s in ("BAD", "OK1")]
+    msgs = run(assets, lambda a: good)
+    assert sum(m.startswith("SKIP BAD") for m in msgs) == 1
+    assert (tmp_path / "quality_report.csv").exists()
+    assert (tmp_path / "raw" / "stock" / "OK1.parquet").exists()
+
+
+def test_retry_then_success(monkeypatch):
+    sleeps = []
+    monkeypatch.setattr(download, "_sleep", sleeps.append)
+    n = {"c": 0}
+
+    def flaky(a):
+        n["c"] += 1
+        if n["c"] < 3:
+            raise RuntimeError("429")
+        return _bars(pd.bdate_range("2020-01-01", periods=5))
+
+    a = AssetMeta("X", "stock", "t", "large", False, False)
+    assert not download.fetch_with_retry(flaky, a).empty
+    assert n["c"] == 3 and sleeps == [1, 2]

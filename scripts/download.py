@@ -2,7 +2,7 @@
 import argparse
 
 from swingbot.data.download import run
-from swingbot.data.universe import crypto_universe, stock_universe
+from swingbot.data.universe import crypto_universe, stock_universe, with_benchmark
 
 
 def main() -> None:
@@ -12,11 +12,9 @@ def main() -> None:
     args = p.parse_args()
     assets = []
     if args.market in ("stock", "all"):
-        s = stock_universe()
-        assets += s[: args.limit] if args.limit else s
+        assets += with_benchmark(stock_universe(), "stock", args.limit)
     if args.market in ("crypto", "all"):
-        c = crypto_universe()
-        assets += c[: args.limit] if args.limit else c
+        assets += with_benchmark(crypto_universe(), "crypto", args.limit)
     for m in run(assets):
         print(m)
 

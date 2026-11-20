@@ -12,7 +12,8 @@ UNIVERSE_DIR: Path = config._REPO_ROOT / "universe"
 UA = {"User-Agent": "Mozilla/5.0 (compatible; swingbot-research/0.1)"}
 SP500_URL = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
 SP400_URL = "https://en.wikipedia.org/wiki/List_of_S%26P_400_companies"
-STABLE_BASES = {"USDC", "FDUSD", "TUSD", "DAI", "USDP", "BUSD", "EUR", "USDE"}
+STABLE_BASES = {"USDC", "FDUSD", "TUSD", "DAI", "USDP", "BUSD", "EUR", "USDE",
+                "USD1", "PYUSD", "RLUSD", "USDS", "XUSD"}
 LEVERAGED_SUFFIXES = ("UP", "DOWN", "BULL", "BEAR")
 MAJORS = {"BTC", "ETH"}
 
@@ -100,3 +101,13 @@ def crypto_universe(n: int = 60) -> list[AssetMeta]:
     ]
     _write_cache(cache, assets)
     return assets
+
+
+def with_benchmark(assets: list[AssetMeta], market: str, limit: int | None) -> list[AssetMeta]:
+    """Benchmark first, then up to `limit` other assets (all if limit is None)."""
+    bench = config.BENCHMARK[market]
+    b = [a for a in assets if a.symbol == bench]
+    if not b:
+        raise ValueError(f"benchmark {bench} missing from {market} universe")
+    rest = [a for a in assets if a.symbol != bench]
+    return b + (rest[:limit] if limit else rest)

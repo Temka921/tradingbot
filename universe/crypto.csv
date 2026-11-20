@@ -2,10 +2,8 @@ symbol,market,sector,cap_bucket,is_etf,is_major
 BTCUSDT,crypto,crypto,major,False,True
 ETHUSDT,crypto,crypto,major,False,True
 ZECUSDT,crypto,crypto,alt,False,False
-USD1USDT,crypto,crypto,alt,False,False
 SOLUSDT,crypto,crypto,alt,False,False
 XRPUSDT,crypto,crypto,alt,False,False
-RLUSDUSDT,crypto,crypto,alt,False,False
 NEARUSDT,crypto,crypto,alt,False,False
 XAUTUSDT,crypto,crypto,alt,False,False
 SOXLBUSDT,crypto,crypto,alt,False,False
@@ -45,7 +43,6 @@ WLDUSDT,crypto,crypto,alt,False,False
 SNDKBUSDT,crypto,crypto,alt,False,False
 KORUBUSDT,crypto,crypto,alt,False,False
 HUMAUSDT,crypto,crypto,alt,False,False
-XUSDUSDT,crypto,crypto,alt,False,False
 SNXXBUSDT,crypto,crypto,alt,False,False
 TQQQBUSDT,crypto,crypto,alt,False,False
 FETUSDT,crypto,crypto,alt,False,False
@@ -59,3 +56,6 @@ MEGAUSDT,crypto,crypto,alt,False,False
 PUMPUSDT,crypto,crypto,alt,False,False
 SKHYBUSDT,crypto,crypto,alt,False,False
 HBARUSDT,crypto,crypto,alt,False,False
+RAREUSDT,crypto,crypto,alt,False,False
+KERNELUSDT,crypto,crypto,alt,False,False
+FILUSDT,crypto,crypto,alt,False,False

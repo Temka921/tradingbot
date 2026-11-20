@@ -14,6 +14,26 @@ STAT_COLS = ["n_all", "n_solo", "n_dates", "mean_all", "mean_solo", "edge_vs_all
              "hit_rate", "profit_factor", "t", "p", "q", "occ_per_year", "insufficient"]
 
 
+CLIP_PCT = (0.1, 99.9)
+
+
+def clip_bounds(values: np.ndarray) -> tuple[float, float]:
+    """Pooled (CLIP_PCT) percentiles of the non-NaN values; NaN bounds when there are none."""
+    v = np.asarray(values, dtype="float64")
+    v = v[~np.isnan(v)]
+    if not len(v):
+        return (np.nan, np.nan)
+    lo, hi = np.percentile(v, CLIP_PCT)
+    return float(lo), float(hi)
+
+
+def clip_values(values: np.ndarray, bounds: tuple[float, float]) -> np.ndarray:
+    """Symmetric winsorisation at ``bounds``; NaN stays NaN."""
+    lo, hi = bounds
+    v = np.asarray(values, dtype="float64")
+    return v if np.isnan(lo) else np.clip(v, lo, hi)
+
+
 def _info(signal_info: dict[str, tuple[str, str]] | None) -> dict[str, tuple[str, str]]:
     return SIGNAL_INFO if signal_info is None else signal_info
 
@@ -128,6 +148,10 @@ def solo_table(panel: pd.DataFrame, horizon: int = 10, metric: str = "excess",
 
     The outcome column is ``f"{metric}_{direction}_{horizon}"`` using each
     signal's direction. Only rows of ``split`` are used (``None`` = all rows).
+    Before any statistic the metric is clipped at its CLIP_PCT (0.1, 99.9)
+    percentiles pooled over every row of the split (pass one market per call);
+    signal rows and the baseline use the same clipped values. The bounds are in
+    ``table.attrs["clip_bounds"]``.
     Rows with a NaN group key are dropped; NaN metric values are ignored, so
     ``n_all``/``n_solo`` count occurrences with a known outcome and
     ``n_dates`` counts the distinct dates among them.
@@ -170,7 +194,12 @@ def solo_table(panel: pd.DataFrame, horizon: int = 10, metric: str = "excess",
         return a if rows is None else a[rows]
 
     directions = sorted({d for _, d in info.values()})
-    vals = {d: col(f"{metric}_{d}_{horizon}").astype("float64") for d in directions}
+    raw = {d: col(f"{metric}_{d}_{horizon}").astype("float64") for d in directions}
+    # winsorise once, over every row of this split, before any statistic: signal rows and the
+    # same-day baseline see the same clipped values (guards against bad data splices)
+    clip = {d: clip_bounds(raw[d]) for d in directions}
+    vals = {d: clip_values(raw[d], clip[d]) for d in directions}
+    del raw
     base = {d: _baseline_daily(vals[d], dates, codes, n_groups) for d in directions}
     fam_any = _family_any(panel, info, rows)
 
@@ -198,4 +227,5 @@ def solo_table(panel: pd.DataFrame, horizon: int = 10, metric: str = "excess",
     table["n_solo"] = table["n_solo"].astype(np.int64)
     table["n_dates"] = table["n_dates"].astype(np.int64)
     table["insufficient"] = table["insufficient"].astype(bool)
+    table.attrs["clip_bounds"] = {f"{metric}_{d}_{horizon}": clip[d] for d in directions}
     return table

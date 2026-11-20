@@ -146,7 +146,7 @@ def _stock_setup(extra=()):
 def test_corrupt_asset_skipped(capsys):
     _stock_setup([("BAD", "stock", "Tech", "large", False, False)])
     (config.DATA_DIR / "raw" / "stock" / "BAD.parquet").write_bytes(b"not a parquet")
-    out = panel.build_panel("stock")
+    out = panel.build_panel("stock", max_skip_frac=1.0)
     assert set(out["asset"]) == {"SPY", "AAA"}
     assert "SKIP BAD:" in capsys.readouterr().out
 
@@ -165,7 +165,7 @@ def test_failing_signal_asset_skipped(capsys, monkeypatch):
            ("AAA", "stock", "Tech", "large", False, False),
            ("ZZZ", "stock", "Tech", "large", False, False)])
     monkeypatch.setattr(panel, "compute_signals", boom)
-    out = panel.build_panel("stock")
+    out = panel.build_panel("stock", max_skip_frac=1.0)
     assert set(out["asset"]) == {"SPY", "AAA"}
     assert "SKIP ZZZ: RuntimeError: boom" in capsys.readouterr().out
 
@@ -217,6 +217,56 @@ def test_build_panel_short_history_asset_included(capsys):
     assert len(new) == 120
     assert (new["vol_regime"] == "unknown").all()
     assert "SKIP NEW" not in capsys.readouterr().out
+
+
+def test_stock_rows_under_one_dollar_dropped(capsys):
+    _stock_setup([("PEN", "stock", "Tech", "small", False, False)])
+    close = np.concatenate([np.full(400, 0.5), np.full(1100, 5.0)]) * np.exp(
+        np.random.default_rng(3).normal(0, 0.001, 1500))
+    pen = bars_from_close(close, start="2016-01-01")
+    store.save_bars("PEN", "stock", pen)
+    out = panel.build_panel("stock")
+    got = out[out["asset"] == "PEN"]
+    keep = pen[(pen.index < pd.Timestamp(config.HOLDOUT_START)) & (pen["close"] >= 1.0)]
+    keep = keep[store.split_of(keep.index, "stock") != "pre"]
+    assert len(got) == len(keep) > 0
+    assert got["date"].min() == keep.index.min()
+    # signals and outcomes were computed on the full history, before the drop (causal mask only)
+    assert "400 stock rows dropped with close < $1" in capsys.readouterr().out
+
+
+def test_crypto_rows_under_one_dollar_kept():
+    for sym in ("BTCUSDT", "CHEAPUSDT"):
+        store.save_bars(sym, "crypto", rand_bars(500, seed=len(sym), start="2020-01-01", freq="D"))
+    cheap = rand_bars(500, seed=9, start="2020-01-01", freq="D")
+    cheap[["open", "high", "low", "close"]] *= 0.001
+    store.save_bars("CHEAPUSDT", "crypto", cheap)
+    _meta([("BTCUSDT", "crypto", "crypto", "major", False, True),
+           ("CHEAPUSDT", "crypto", "crypto", "alt", False, False)])
+    out = panel.build_panel("crypto")
+    assert (out["asset"] == "CHEAPUSDT").sum() == 500
+
+
+def test_skip_guard_raises_on_too_many_failures(capsys):
+    _stock_setup([("BAD", "stock", "Tech", "large", False, False)])
+    (config.DATA_DIR / "raw" / "stock" / "BAD.parquet").write_bytes(b"not a parquet")
+    with pytest.raises(ValueError, match=r"1 of 3 stock assets .*skipped"):
+        panel.build_panel("stock")
+    assert "SKIP BAD:" in capsys.readouterr().out
+    out = panel.build_panel("stock", max_skip_frac=0.5)
+    assert set(out["asset"]) == {"SPY", "AAA"}
+    assert "1 of 3 assets skipped for errors" in capsys.readouterr().out
+
+
+def test_skip_guard_ignores_expected_skips(capsys):
+    # pre-period-only and post-holdout-only assets are expected skips: no raise at the default 2%
+    _stock_setup([("OLD", "stock", "Tech", "large", False, False),
+                  ("LATE", "stock", "Tech", "large", False, False)])
+    store.save_bars("OLD", "stock", rand_bars(200, seed=7, start="1990-01-01"))
+    store.save_bars("LATE", "stock", rand_bars(100, seed=8, start="2025-01-01"))
+    out = panel.build_panel("stock")
+    assert set(out["asset"]) == {"SPY", "AAA"}
+    assert "0 of 4 assets skipped for errors" in capsys.readouterr().out
 
 
 def test_build_panel_empty_after_holdout_cut_skipped(capsys):

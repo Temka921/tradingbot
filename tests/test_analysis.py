@@ -127,6 +127,10 @@ def test_solo_table_columns_and_direction_metric():
 def test_solo_table_values_match_manual():
     p = make_panel()
     t = solo_table(p, horizon=10, signal_info=INFO).set_index("signal")
+    # statistics are computed on values clipped at pooled 0.1/99.9 percentiles of the split
+    v_all = p["excess_long_10"].to_numpy(dtype="float64")
+    lo, hi = np.percentile(v_all, (0.1, 99.9))
+    p["excess_long_10"] = np.clip(v_all, lo, hi)
     a = p[p["A"]]
     r = clustered_mean_test(a["excess_long_10"].astype(float), a["date"], 10)
     # independent date-matched edge: per-date signal mean minus per-date all-rows mean
@@ -333,6 +337,36 @@ def test_edge_test_null_size():
 def test_edge_test_null_size_sparse_runs():
     """Null calibration, sparse Markov runs (~10-day runs, ~3% occupancy): size <= 8% at 5%."""
     assert _null_size("markov", reps=300, seed=7) <= 0.08
+
+
+def test_clip_outlier_does_not_dominate_edge():
+    p = make_panel(n_dates=1500, assets=tuple(f"S{i}" for i in range(10)), seed=11)
+    base = solo_table(p, horizon=10, signal_info=INFO).set_index("signal").loc["A", "edge_vs_all_days"]
+    row = p.index[p["A"]][500]
+    p.loc[row, "excess_long_10"] = np.float32(300.0)       # a 300x data splice on one date
+    a = solo_table(p, horizon=10, signal_info=INFO).set_index("signal").loc["A"]
+    assert abs(a["edge_vs_all_days"]) < 0.002
+    assert abs(a["edge_vs_all_days"] - base) < 0.0005
+    assert a["p"] > 1e-3
+
+
+def test_clip_symmetric_pooled_percentiles():
+    from swingbot.analysis.solo import CLIP_PCT, clip_bounds
+    p = make_panel(n_dates=1500, assets=tuple(f"S{i}" for i in range(10)), seed=12)
+    p.loc[p.index[p["A"]][100], "excess_long_10"] = np.float32(300.0)
+    p.loc[p.index[p["A"]][200], "excess_long_10"] = np.float32(-300.0)
+    p["split"] = p["split"].astype(object)
+    p.loc[p.index[:50], "split"] = "validation"
+    v = p.loc[p["split"] == "discovery", "excess_long_10"].to_numpy(dtype="float64")
+    lo, hi = np.percentile(v, CLIP_PCT)
+    assert CLIP_PCT == (0.1, 99.9)
+    assert clip_bounds(v) == pytest.approx((lo, hi))
+    t = solo_table(p, horizon=10, signal_info=INFO)
+    assert t.attrs["clip_bounds"]["excess_long_10"] == pytest.approx((lo, hi))
+    assert t.attrs["clip_bounds"]["excess_short_10"][0] < 0 < t.attrs["clip_bounds"]["excess_short_10"][1]
+    # both tails clipped: a +300 and a -300 cancel out of A's mean instead of swinging it
+    a = t.set_index("signal").loc["A"]
+    assert abs(a["mean_all"]) < 0.002 and abs(a["edge_vs_all_days"]) < 0.002
 
 
 def test_insufficient_when_dates_below_test_minimum():

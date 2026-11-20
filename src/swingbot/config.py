@@ -17,6 +17,8 @@ SPLITS: dict[str, dict[str, tuple[str, str]]] = {
 HOLDOUT_START = "2024-01-01"
 MIN_N = 100
 MIN_N_SLICE = 30
+MIN_STOCK_PRICE = 1.0     # stock rows with close at t below this are dropped from the panel
+MAX_SKIP_FRAC = 0.02      # build_panel raises if more assets than this fail with an error
 BENCHMARK: dict[str, str] = {"stock": "SPY", "crypto": "BTCUSDT"}
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]

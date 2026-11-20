@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Swing research: solo signals {{ stamp }}</title>
+<script src="{{ cdn }}"></script>
+<style>
+ body{font-family:system-ui,Segoe UI,Arial,sans-serif;margin:0 auto;padding:12px 16px;max-width:1200px;color:#1b1f24;background:#fff;overflow-wrap:anywhere}
+ h1{font-size:1.4rem} h2{font-size:1.15rem;margin-top:2rem;border-bottom:1px solid #ccd;padding-bottom:4px}
+ .caveat{background:#fff4d6;border:1px solid #e0b84a;padding:10px 12px;border-radius:6px}
+ .how{background:#eef3fb;border:1px solid #b9c9e6;padding:8px 12px;border-radius:6px;font-size:.92rem}
+ .scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;max-width:100%}
+ table{border-collapse:collapse;font-size:.82rem;white-space:nowrap}
+ th,td{border:1px solid #d5d9e0;padding:3px 7px;text-align:right} th{background:#f0f2f6;position:sticky;top:0}
+ td:first-child,th:first-child{text-align:left}
+ tr.insuf td{color:#9aa0a8;background:#f6f6f6}
+ .plot{max-width:100%;overflow-x:auto}
+</style></head><body>
+<h1>Swing research report: solo signals (horizon {{ horizon }} days)</h1>
+<p>Generated {{ stamp }}. Research tool only; not trading or investment advice.</p>
+
+<div class="caveat"><strong>Caveats.</strong> {{ caveat }} {{ caveat_extra }}</div>
+
+<div class="how"><strong>How to read this.</strong>
+<ul>
+<li><b>Excess</b>: return from the next day's open over {{ horizon }} days, minus costs, minus the benchmark (SPY for stocks, BTC for crypto). Shown in bps (1 bp = 0.01%).</li>
+<li><b>Edge</b>: the signal's average excess minus the average of all assets in the same market on the same days. This is what the p-value tests.</li>
+<li><b>q</b>: p-value corrected for running many tests at once (Benjamini-Hochberg), within one table. Below 0.10 is the minimum bar, not proof.</li>
+<li><b>Insufficient</b>: too few occurrences or distinct dates to test. Greyed or blank; never a winner.</li>
+</ul></div>
+
+<h2>1. Data coverage</h2>
+<div class="scroll"><table><tr><th>Market</th><th>Assets</th><th>Rows</th><th>Discovery rows</th><th>First date</th><th>Last date</th><th>Quality issues</th></tr>
+{% for c in coverage %}<tr><td>{{ c.market }}</td><td>{{ c.assets }}</td><td>{{ c.rows }}</td><td>{{ c.disc_rows }}</td><td>{{ c.start }}</td><td>{{ c.end }}</td><td>{{ c.issues }}</td></tr>
+{% endfor %}</table></div>
+
+<h2>2. Solo leaderboard per market</h2>
+<p>Sorted: sufficient rows first, then q ascending, then edge descending. Grey rows are insufficient.</p>
+{% for l in leaders %}
+<h3>{{ l.market }}: {{ l.n_sufficient }} sufficient, {{ l.n_sig }} with q &lt; 0.10</h3>
+<div class="scroll"><table><tr>{% for h in headers %}<th>{{ h }}</th>{% endfor %}</tr>
+{% for r in l.rows %}<tr{% if r.insufficient %} class="insuf"{% endif %}>{% for c in r.cells %}<td>{{ c }}</td>{% endfor %}</tr>
+{% endfor %}</table></div>
+{% endfor %}
+
+<h2>3. Heatmaps: edge vs same-day average (bps)</h2>
+<p>Cell colour is the edge tested by p/q, not the raw mean. Hover shows n, dates, mean excess, t and q. Insufficient cells are blank.</p>
+<div class="plot">{{ heat_trend|safe }}</div>
+<div class="plot">{{ heat_vol|safe }}</div>
+
+<h2>4. Segment tables</h2>
+<p>Insufficient slices show counts only; statistics are blank.</p>
+{% for s in segments %}
+<h3>{{ s.market }}</h3>
+<div class="scroll"><table><tr>{% for h in s.headers %}<th>{{ h }}</th>{% endfor %}</tr>
+{% for r in s.rows %}<tr{% if r.insufficient %} class="insuf"{% endif %}>{% for c in r.cells %}<td>{{ c }}</td>{% endfor %}</tr>
+{% endfor %}</table></div>
+{% endfor %}
+</body></html>

@@ -25,7 +25,7 @@ _TEMPLATES = Path(__file__).parent / "templates"
 
 STAT_FIELDS = {"mean_all", "edge_vs_all_days", "t", "p", "q", "hit_rate", "profit_factor", "occ_per_year"}
 LEADER_COLS = [
-    ("signal", "Signal"), ("family", "Family"), ("direction", "Dir"), ("n_all", "n"),
+    ("signal", "Signal"), ("family", "Family"), ("direction", "Dir"), ("verdict", "Verdict"), ("n_all", "n"),
     ("n_solo", "n solo"), ("n_dates", "Dates"), ("mean_all", "Mean excess (date-weighted, bps)"),
     ("edge_vs_all_days", "Edge vs same-day avg (bps)"), ("t", "t"), ("p", "p"),
     ("q", "q (BH, this table)"), ("hit_rate", "Hit rate"), ("profit_factor", "Profit factor"),
@@ -33,10 +33,44 @@ LEADER_COLS = [
 ]
 
 
+SIG_Q = 0.10
+VERDICTS = ["candidate", "significant negative edge (avoid)",
+            "beats same-day avg but loses net of costs", "not significant", "insufficient"]
+
+
+def add_verdicts(t: pd.DataFrame) -> pd.DataFrame:
+    """Add a ``verdict`` column (after ``direction`` when present).
+
+    candidate: sufficient, q < 0.10, edge > 0 AND mean excess net of costs > 0.
+    Edge and its p/q are relative to the same-day average and cost-neutral, so a
+    significant positive edge alone is not enough.
+    """
+    t = t.drop(columns="verdict", errors="ignore").copy()
+    insuf = t["insufficient"].astype(bool).to_numpy()
+    q = t["q"].to_numpy(dtype="float64")
+    edge = t["edge_vs_all_days"].to_numpy(dtype="float64")
+    mean = t["mean_all"].to_numpy(dtype="float64")
+    sig = ~insuf & (q < SIG_Q)
+    v = np.select([insuf, sig & (edge > 0) & (mean > 0), sig & (edge < 0), sig & (edge > 0)],
+                  [VERDICTS[4], VERDICTS[0], VERDICTS[1], VERDICTS[2]], default=VERDICTS[3])
+    pos = t.columns.get_loc("direction") + 1 if "direction" in t.columns else len(t.columns)
+    t.insert(pos, "verdict", v)
+    return t
+
+
+def verdict_counts(t: pd.DataFrame) -> dict[str, int]:
+    vc = t["verdict"].value_counts()
+    return {v: int(vc.get(v, 0)) for v in VERDICTS}
+
+
 def sort_leaderboard(t: pd.DataFrame) -> pd.DataFrame:
-    """Insufficient rows last; then q ascending (NaN last); then edge descending."""
-    return t.sort_values(["insufficient", "q", "edge_vs_all_days"], ascending=[True, True, False],
-                         na_position="last", kind="stable").reset_index(drop=True)
+    """Verdict order (candidate, avoid, loses net, not significant, insufficient);
+    within each: q ascending (NaN last), then edge descending."""
+    t = add_verdicts(t)
+    t["_rank"] = t["verdict"].map({v: i for i, v in enumerate(VERDICTS)})
+    return (t.sort_values(["_rank", "q", "edge_vs_all_days"], ascending=[True, True, False],
+                          na_position="last", kind="stable")
+            .drop(columns="_rank").reset_index(drop=True))
 
 
 def _bps(v) -> str:
@@ -44,7 +78,7 @@ def _bps(v) -> str:
 
 
 def _fmt(col: str, v) -> str:
-    if col in ("signal", "family", "direction"):
+    if col in ("signal", "family", "direction", "verdict"):
         return str(v)
     if col in ("n_all", "n_solo", "n_dates"):
         return str(int(v))
@@ -66,7 +100,7 @@ def _fmt(col: str, v) -> str:
 
 
 def _rows(t: pd.DataFrame, cols: list[tuple[str, str]], blank_insufficient: bool = False) -> list[dict]:
-    keep_always = {"signal", "family", "direction", "n_all", "n_solo", "n_dates"}
+    keep_always = {"signal", "family", "direction", "verdict", "n_all", "n_solo", "n_dates"}
     out = []
     for r in t.to_dict("records"):
         insuf = bool(r["insufficient"])
@@ -154,8 +188,7 @@ def build_report(panels: dict[str, pd.DataFrame], out_path: Path, horizon: int =
         lb = sort_leaderboard(solo_table(panel, horizon=horizon))
         save(f"leaderboard_{market}", lb)
         leaders.append({"market": market, "rows": _rows(lb, LEADER_COLS),
-                        "n_sufficient": int((~lb["insufficient"]).sum()),
-                        "n_sig": int((lb["q"] < 0.10).sum())})
+                        "counts": verdict_counts(lb)})
 
         tr = solo_table(panel, horizon=horizon, group_by=["market", "trend_regime"])
         vo = solo_table(panel, horizon=horizon, group_by=["market", "vol_regime"])

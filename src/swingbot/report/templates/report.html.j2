@@ -23,8 +23,9 @@
 <div class="how"><strong>How to read this.</strong>
 <ul>
 <li><b>Excess</b>: return from the next day's open over {{ horizon }} days, minus costs, minus the benchmark (SPY for stocks, BTC for crypto). Shown in bps (1 bp = 0.01%).</li>
-<li><b>Edge</b>: the signal's average excess minus the average of all assets in the same market on the same days. This is what the p-value tests.</li>
+<li><b>Edge</b>: the signal's average excess minus the average of all assets in the same market on the same days. This is what the p-value tests. Edge and its p/q are relative and cost-neutral: both sides pay the same cost, so costs cancel. A significant edge can still lose money after costs, and a significant negative edge is a reason to avoid the signal, not a finding in its favour.</li>
 <li><b>q</b>: p-value corrected for running many tests at once (Benjamini-Hochberg), within one table. Below 0.10 is the minimum bar, not proof.</li>
+<li><b>Verdict</b>: <i>candidate</i> = sufficient, q &lt; 0.10, edge &gt; 0 <b>and</b> mean excess net of costs &gt; 0. <i>Significant negative edge (avoid)</i> = q &lt; 0.10 with edge &lt; 0. <i>Beats same-day avg but loses net of costs</i> = q &lt; 0.10, edge &gt; 0, mean excess net of costs &le; 0. Only candidates are worth a second look, and even they are not proof.</li>
 <li><b>Insufficient</b>: too few occurrences or distinct dates to test. Greyed or blank; never a winner.</li>
 </ul></div>
 
@@ -34,9 +35,9 @@
 {% endfor %}</table></div>
 
 <h2>2. Solo leaderboard per market</h2>
-<p>Sorted: sufficient rows first, then q ascending, then edge descending. Grey rows are insufficient.</p>
+<p>Sorted by verdict (candidate, avoid, loses net of costs, not significant, insufficient), then q ascending, then edge descending. Grey rows are insufficient.</p>
 {% for l in leaders %}
-<h3>{{ l.market }}: {{ l.n_sufficient }} sufficient, {{ l.n_sig }} with q &lt; 0.10</h3>
+<h3>{{ l.market }}: {% for v, n in l.counts.items() %}{{ v }}: {{ n }}{% if not loop.last %} · {% endif %}{% endfor %}</h3>
 <div class="scroll"><table><tr>{% for h in headers %}<th>{{ h }}</th>{% endfor %}</tr>
 {% for r in l.rows %}<tr{% if r.insufficient %} class="insuf"{% endif %}>{% for c in r.cells %}<td>{{ c }}</td>{% endfor %}</tr>
 {% endfor %}</table></div>

@@ -86,7 +86,9 @@ def test_insufficient_blank_in_rendered_html(tmp_path):
     assert rows
     for r in rows:
         cells = re.findall(r"<td>(.*?)</td>", r, flags=re.S)
-        assert sum(1 for c in cells if c.strip()) == 6   # signal, sector, dir, n, n solo, dates only
+        # signal, sector, dir, verdict, n, n solo, dates only
+        assert sum(1 for c in cells if c.strip()) == 7
+        assert "insufficient" in cells
         assert any(c.strip() == "" for c in cells)
     # heatmap hover for insufficient cells: only the insufficient message, no mean/t/q
     hov = re.findall(r'"([^"]*insufficient data \(n=\d+, dates=\d+\)[^"]*)"', html)
@@ -97,8 +99,35 @@ def test_insufficient_blank_in_rendered_html(tmp_path):
 def test_leaderboard_sort_order():
     t = pd.DataFrame({
         "signal": list("abcde"), "insufficient": [True, False, False, False, False],
-        "q": [0.0, 0.2, 0.01, 0.01, np.nan], "edge_vs_all_days": [9.0, 1.0, 0.5, 0.7, 5.0]})
+        "q": [0.0, 0.2, 0.01, 0.01, np.nan], "edge_vs_all_days": [9.0, 1.0, 0.5, 0.7, 5.0],
+        "mean_all": [1.0, 1.0, 1.0, 1.0, 1.0]})
     assert list(sort_leaderboard(t)["signal"]) == ["d", "c", "b", "e", "a"]
+
+
+def _verdict_fixture():
+    return pd.DataFrame({
+        "signal": ["neg", "lossnet", "cand", "cand2", "ns", "insuf", "nanq"],
+        "insufficient": [False, False, False, False, False, True, False],
+        "q": [0.001, 0.01, 0.05, 0.05, 0.4, 0.0, np.nan],
+        "edge_vs_all_days": [-0.004, 0.002, 0.001, 0.003, 0.01, 0.05, 0.02],
+        "mean_all": [0.002, -0.001, 0.0005, 0.0001, 0.02, 0.05, 0.02]})
+
+
+def test_verdicts_and_sort():
+    from swingbot.report.build import VERDICTS, add_verdicts, verdict_counts
+    t = add_verdicts(_verdict_fixture()).set_index("signal")["verdict"]
+    assert t["neg"] == "significant negative edge (avoid)"
+    assert t["lossnet"] == "beats same-day avg but loses net of costs"
+    assert t["cand"] == t["cand2"] == "candidate"
+    assert t["ns"] == t["nanq"] == "not significant"
+    assert t["insuf"] == "insufficient"
+    counts = verdict_counts(add_verdicts(_verdict_fixture()))
+    assert list(counts) == VERDICTS
+    assert counts["candidate"] == 2 and counts["significant negative edge (avoid)"] == 1
+    s = sort_leaderboard(_verdict_fixture())
+    # candidates first (q asc, then edge desc), then avoid, then loses-net, then not significant, insufficient
+    assert list(s["signal"]) == ["cand2", "cand", "neg", "lossnet", "ns", "nanq", "insuf"]
+    assert "verdict" in s.columns
 
 
 def test_formatting_bps_and_profit_factor():
@@ -135,6 +164,30 @@ def test_quality_count_filters_market():
     assert _quality_count(q, {"A", "B"}, "stock") == 2
     assert _quality_count(q, {"A", "B"}, "crypto") == 2
     assert _quality_count(None, {"A"}, "stock") is None
+
+
+def test_rendered_verdicts_not_counted_as_hits(tmp_path):
+    panels = {"stock": make_market_panel("stock", seed=1)}
+    p = panels["stock"]
+    names = list(SIGNAL_INFO)
+    neg, pos = names[1], names[2]
+    for name, shift in ((neg, -0.03), (pos, 0.03)):
+        col = f"excess_{SIGNAL_INFO[name][1]}_10"
+        p[col] = p[col].astype("float64")
+        p.loc[p[name], col] += shift
+    # make every pos value net-negative while it still beats the same-day average
+    pcol = f"excess_{SIGNAL_INFO[pos][1]}_10"
+    p[pcol] = p[pcol] - 0.05
+    html = build_report(panels, tmp_path / "r.html", as_of="2026-01-01").read_text(encoding="utf-8")
+    lb = pd.read_csv(tmp_path / "solo_leaderboard_stock_2026-01-01.csv").set_index("signal")
+    assert lb.loc[neg, "verdict"] == "significant negative edge (avoid)"
+    assert lb.loc[pos, "verdict"] == "beats same-day avg but loses net of costs"
+    assert (lb["verdict"] == "candidate").sum() == int(
+        ((~lb["insufficient"]) & (lb["q"] < 0.10) & (lb["edge_vs_all_days"] > 0) & (lb["mean_all"] > 0)).sum())
+    assert "with q &lt; 0.10" not in html
+    assert re.search(r"candidate: \d+", html)
+    assert "cost-neutral" in html
+    assert lb.iloc[0]["verdict"] in ("candidate", "significant negative edge (avoid)")
 
 
 def test_analyze_script_missing_market(tmp_path, monkeypatch, capsys):

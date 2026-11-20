@@ -328,6 +328,39 @@ def test_adx_trend_up_fixture():
     assert pdi.iloc[t] > mdi.iloc[t] and pdi.iloc[t - 1] <= mdi.iloc[t - 1] and a.iloc[t] > 25
 
 
+def test_avwap_no_fire_on_confirmation_then_same_anchor_cross():
+    # swing low (bar 10, heavy volume, high close) confirmed at bar 12 while price
+    # stays below the new-anchor AVWAP -> no fire; real cross at bar 15 -> fire
+    o = [111.0 - i for i in range(10)]
+    c = [110.0 - i for i in range(10)]
+    h = [x + 0.5 for x in o]
+    lo = [x - 0.5 for x in c]
+    v = [1000.0] * 10
+    o.append(99.0); c.append(100.0); h.append(101.0); lo.append(90.0); v.append(20000.0)
+    for x in (95.0, 95.5, 96.0, 96.5):
+        o.append(x - 0.2); c.append(x); h.append(x + 0.3); lo.append(x - 1.0); v.append(1000.0)
+    o.append(96.5); c.append(99.0); h.append(99.2); lo.append(96.3); v.append(1000.0)
+    for x in (99.5, 100.0, 100.5, 101.0):
+        o.append(x - 0.2); c.append(x); h.append(x + 0.3); lo.append(x - 0.4); v.append(1000.0)
+    df = bars(c, open_=o, high=h, low=lo, volume=v)
+    assert list(np.flatnonzero(confirmed_pivots(df["low"]).to_numpy())) == [12]
+    assert fires(df, "close_above_avwap_swinglow") == [15]
+
+
+def test_avwap_anchor_reset_alone_is_not_a_cross():
+    # old anchor (bar 5) VWAP is far above price after a high-volume rally; a new
+    # swing low (bar 23) is confirmed at bar 25 with close already above the
+    # same-anchor VWAP on bar 24 -> mixing anchors would fire at 25; must not
+    c = np.array([100, 98, 96, 94, 92, 90, 93, 97, 102, 108, 115, 122, 128, 130,
+                  128, 125, 121, 117, 112, 107, 103, 100, 98, 97,
+                  99, 101, 103, 105, 107, 109], float)
+    v = np.full(len(c), 1000.0)
+    v[8:14] = 8000.0
+    df = bars(c, volume=v, pad=0.3)
+    assert list(np.flatnonzero(confirmed_pivots(df["low"]).to_numpy())) == [7, 25]
+    assert fires(df, "close_above_avwap_swinglow") == []
+
+
 # ---------------------------------------------------------------- cross-sectional
 def test_cross_sectional_top_decile():
     n_assets, n_bars = 20, 420

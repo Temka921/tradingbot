@@ -51,19 +51,12 @@ def test_rsi_known_value():
               43.1314]
     s = pd.Series(closes)
     r = ind.rsi(s, 14)
-    # independent Wilder recursion (ewm adjust=False: seeded with the first change)
-    d = s.diff().to_numpy()
-    g = np.where(d > 0, d, 0.0)
-    l = np.where(d < 0, -d, 0.0)
-    ag, al = g[1], l[1]
-    exp = {}
-    for i in range(2, len(s)):
-        ag = (ag * 13 + g[i]) / 14
-        al = (al * 13 + l[i]) / 14
-        exp[i] = 100 - 100 / (1 + ag / al)
-    assert round(r.iloc[14], 2) == round(exp[14], 2) == 50.75
-    assert r.iloc[-1] == pytest.approx(exp[len(s) - 1])
+    # Published RSI(14) values for this series (StockCharts "RSI" ChartSchool
+    # spreadsheet, Wilder smoothing seeded with the SMA of the first 14 changes).
+    published = [70.53, 66.32, 66.55, 69.41, 66.36, 57.97]
     assert r.iloc[:14].isna().all()
+    assert [round(v, 2) for v in r.iloc[14:20]] == published
+    assert round(r.iloc[-1], 2) == 37.77
 
 
 def test_atr_uses_prior_close():
@@ -77,6 +70,7 @@ def test_atr_uses_prior_close():
     assert tr.iloc[1] == 2
     a = ind.atr(df, 2)
     assert np.isnan(a.iloc[0])
+    assert a.iloc[1] == pytest.approx(2.0)  # SMA seed of TR [2, 2]
     assert a.iloc[2] == pytest.approx(0.5 * 6 + 0.5 * a.iloc[1])
 
 
@@ -172,9 +166,16 @@ def test_swing_no_future(fn):
 def test_path_dependent_no_future(fn):
     df = make_bars(120, seed=5)
     full = getattr(ind, fn)(df)
-    assert set(full.unique()) <= {-1, 0, 1} and (full != 0).sum() > 80
+    assert set(full.dropna().unique()) <= {-1.0, 1.0} and full.notna().sum() > 80
+    assert full.dtype == float
+    first = full.first_valid_index()
+    pos = full.index.get_loc(first)
+    assert full.iloc[:pos].isna().all()  # NaN (never 0) before initialisation
+    d = full.diff()
+    assert np.isnan(d.iloc[pos])  # no false flip at initialisation
     for t in range(0, len(df), 7):
-        assert getattr(ind, fn)(df.iloc[: t + 1]).iloc[-1] == full.iloc[t]
+        a, b = getattr(ind, fn)(df.iloc[: t + 1]).iloc[-1], full.iloc[t]
+        assert (np.isnan(a) and np.isnan(b)) or a == b
 
 
 def test_psar_trend_direction():

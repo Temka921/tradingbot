@@ -2,7 +2,7 @@
 
 Every function is pure: output is aligned to the input index and the value at
 bar t depends only on bars <= t. Warm-up values are NaN (direction indicators
-return 0 until initialised). NaN inputs never raise.
+return NaN until initialised). NaN inputs never raise.
 """
 from __future__ import annotations
 
@@ -11,7 +11,39 @@ import pandas as pd
 
 
 def _wilder(s: pd.Series, n: int) -> pd.Series:
-    return s.ewm(alpha=1.0 / n, adjust=False, min_periods=n).mean()
+    """Textbook Wilder smoothing: SMA of the first n values (counted from the first
+    non-NaN input) seeds the series at that point, then prev + (x - prev) / n.
+    NaN before the seed; a NaN input mid-stream yields NaN and keeps the state."""
+    x = s.to_numpy(float)
+    out = np.full(len(x), np.nan)
+    valid = np.flatnonzero(~np.isnan(x))
+    if len(valid) == 0 or len(x) - valid[0] < n:
+        return pd.Series(out, index=s.index)
+    first = valid[0]
+    seed_end = first + n - 1
+    window = x[first : seed_end + 1]
+    prev = np.nan
+    if not np.isnan(window).any():
+        prev = window.mean()
+        out[seed_end] = prev
+        start = seed_end + 1
+    else:
+        # NaN inside the seed window: seed from the first run of n consecutive values
+        run = 0
+        start = len(x)
+        for i in range(first, len(x)):
+            run = run + 1 if not np.isnan(x[i]) else 0
+            if run == n:
+                prev = x[i - n + 1 : i + 1].mean()
+                out[i] = prev
+                start = i + 1
+                break
+    for i in range(start, len(x)):
+        if np.isnan(x[i]):
+            continue
+        prev = prev + (x[i] - prev) / n
+        out[i] = prev
+    return pd.Series(out, index=s.index)
 
 
 def sma(s: pd.Series, n: int) -> pd.Series:
@@ -70,7 +102,9 @@ def adx(df: pd.DataFrame, n: int = 14):
     nan = up.isna() | down.isna()
     plus_dm = plus_dm.mask(nan)
     minus_dm = minus_dm.mask(nan)
-    a = atr(df, n).replace(0.0, np.nan)
+    tr = true_range(df)
+    tr.iloc[:1] = np.nan  # DM starts at bar 1, so align TR with it
+    a = _wilder(tr, n).replace(0.0, np.nan)
     plus_di = 100.0 * _wilder(plus_dm, n) / a
     minus_di = 100.0 * _wilder(minus_dm, n) / a
     dx = 100.0 * (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0.0, np.nan)
@@ -111,16 +145,16 @@ def donchian_low(low: pd.Series, n: int) -> pd.Series:
 
 
 def supertrend_dir(df: pd.DataFrame, n: int = 10, mult: float = 3.0) -> pd.Series:
-    """+1 uptrend / -1 downtrend; 0 until ATR is available. Bars with NaN carry state."""
+    """+1.0 uptrend / -1.0 downtrend (float); NaN until ATR is available. Bars with NaN carry state."""
     h, l, c = (df[x].to_numpy(float) for x in ("high", "low", "close"))
     a = atr(df, n).to_numpy()
     size = len(df)
-    out = np.zeros(size, dtype=int)
+    out = np.full(size, np.nan)
     fu = fl = np.nan
-    direction = 0
+    direction = 0.0
     for i in range(size):
         if np.isnan(a[i]) or np.isnan(c[i]) or np.isnan(h[i]) or np.isnan(l[i]):
-            out[i] = direction
+            out[i] = direction if direction != 0 else np.nan
             continue
         mid = (h[i] + l[i]) / 2.0
         bu, bl = mid + mult * a[i], mid - mult * a[i]
@@ -141,11 +175,11 @@ def supertrend_dir(df: pd.DataFrame, n: int = 10, mult: float = 3.0) -> pd.Serie
 
 
 def psar_dir(df: pd.DataFrame, step: float = 0.02, max_step: float = 0.2) -> pd.Series:
-    """Parabolic SAR trend side: +1 (SAR below price) / -1; 0 until initialised."""
+    """Parabolic SAR trend side: +1.0 (SAR below price) / -1.0 (float); NaN until initialised."""
     h = df["high"].to_numpy(float)
     l = df["low"].to_numpy(float)
     size = len(df)
-    out = np.zeros(size, dtype=int)
+    out = np.full(size, np.nan)
     start = None
     for i in range(1, size):
         if not (np.isnan(h[i]) or np.isnan(l[i]) or np.isnan(h[i - 1]) or np.isnan(l[i - 1])):
@@ -157,13 +191,12 @@ def psar_dir(df: pd.DataFrame, step: float = 0.02, max_step: float = 0.2) -> pd.
     sar = l[start - 1] if up else h[start - 1]
     ep = h[start - 1] if up else l[start - 1]
     af = step
-    out[start] = 1 if up else -1
-    # process bar start properly: treat it as the first stepped bar
+        # process bar start properly: treat it as the first stepped bar
     prev_h, prev_l = h[start - 1], l[start - 1]
     prev2_h, prev2_l = prev_h, prev_l
     for i in range(start, size):
         if np.isnan(h[i]) or np.isnan(l[i]):
-            out[i] = out[i - 1] if i > start else (1 if up else -1)
+            out[i] = out[i - 1] if i > start else np.nan
             continue
         sar = sar + af * (ep - sar)
         if up:
@@ -178,7 +211,7 @@ def psar_dir(df: pd.DataFrame, step: float = 0.02, max_step: float = 0.2) -> pd.
                 up, sar, ep, af = True, ep, h[i], step
             elif l[i] < ep:
                 ep, af = l[i], min(af + step, max_step)
-        out[i] = 1 if up else -1
+        out[i] = 1.0 if up else -1.0
         prev2_h, prev2_l = prev_h, prev_l
         prev_h, prev_l = h[i], l[i]
     return pd.Series(out, index=df.index)

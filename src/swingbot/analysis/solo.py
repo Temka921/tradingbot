@@ -5,7 +5,8 @@ import numpy as np
 import pandas as pd
 
 from swingbot import config
-from swingbot.analysis.stats import bh_qvalues, date_matched_edge_test, per_date_means
+from swingbot.analysis.stats import (bh_qvalues, date_matched_edge_test, min_dates_for_test,
+                                     per_date_means)
 from swingbot.signals import SIGNAL_INFO
 
 METRICS = ("excess", "ret")
@@ -145,7 +146,8 @@ def solo_table(panel: pd.DataFrame, horizon: int = 10, metric: str = "excess",
     - ``occ_per_year``: n_all / span in years of all dates in the group/split.
     - ``q``: Benjamini-Hochberg across every row of the returned table.
     - ``insufficient``: n_all or n_dates below MIN_N (no groups) or
-      MIN_N_SLICE (groups); such rows must never be ranked as winners.
+      MIN_N_SLICE (groups), or n_dates below 5*horizon (where p is NaN);
+      such rows must never be ranked as winners.
     """
     if metric not in METRICS:
         raise ValueError(f"metric must be one of {METRICS}, got {metric!r}")
@@ -153,6 +155,8 @@ def solo_table(panel: pd.DataFrame, horizon: int = 10, metric: str = "excess",
     _check_columns(panel, info)
     group_by = list(group_by or [])
     min_n = config.MIN_N_SLICE if group_by else config.MIN_N
+    # no row may be "sufficient" without a p-value (hac_test needs 5*horizon dates)
+    min_dates = max(min_n, min_dates_for_test(horizon))
 
     rows = np.flatnonzero((panel["split"] == split).to_numpy()) if split is not None else None
     sub = panel[["date", *group_by]] if rows is None else panel[["date", *group_by]].iloc[rows]
@@ -183,7 +187,7 @@ def solo_table(panel: pd.DataFrame, horizon: int = 10, metric: str = "excess",
             lo, hi = bounds[k], bounds[k + 1]
             st = _row_stats(v[lo:hi], d[lo:hi], s[lo:hi], base[direction][k], horizon)
             st["occ_per_year"] = st["n_all"] / span[k] if np.isfinite(span[k]) else np.nan
-            st["insufficient"] = (st["n_all"] < min_n) or (st["n_dates"] < min_n)
+            st["insufficient"] = (st["n_all"] < min_n) or (st["n_dates"] < min_dates)
             out.append({"signal": name, "family": family, "direction": direction,
                         **dict(zip(group_by, keys[k])), **st})
 

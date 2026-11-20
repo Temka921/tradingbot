@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 import statsmodels.api as sm
+from scipy import stats as scipy_stats
 
 from swingbot import config
 from swingbot.analysis.solo import solo_mask, solo_table
@@ -139,7 +140,7 @@ def test_solo_table_values_match_manual():
     assert row["mean_all"] == pytest.approx(r.mean)
     assert row["edge_vs_all_days"] == pytest.approx(d.mean())
     assert row["t"] == pytest.approx(fit.tvalues[0])
-    assert row["p"] == pytest.approx(fit.pvalues[0])
+    assert row["p"] == pytest.approx(2 * scipy_stats.t.sf(abs(fit.tvalues[0]), max(len(d) // 20 - 1, 1)))
     assert row["n_solo"] == int((p["A"] & solo_mask(p, "A", signal_info=INFO)).sum())
     assert row["n_solo"] == int((p["A"] & ~p["C"] & ~p["R"] & ~p["Z"]).sum())
     v = a["excess_long_10"].astype(float)
@@ -227,7 +228,10 @@ def test_hac_settings_and_min_dates():
     y = rng.normal(0.001, 0.02, 300)
     r = clustered_mean_test(pd.Series(y), dates, horizon=10)
     fit = sm.OLS(y, np.ones((300, 1))).fit(cov_type="HAC", cov_kwds={"maxlags": 20}, use_t=True)
-    assert r.se == pytest.approx(fit.bse[0]) and r.p == pytest.approx(fit.pvalues[0])
+    assert r.se == pytest.approx(fit.bse[0]) and r.t == pytest.approx(fit.tvalues[0])
+    # p from a t distribution with effective df = 300 // 20 - 1 = 14, not 299
+    assert r.p == pytest.approx(2 * scipy_stats.t.sf(abs(fit.tvalues[0]), 14))
+    assert r.p > fit.pvalues[0]
     # fewer than 5*horizon dates -> no p-value; exactly 5*horizon -> p-value
     short = clustered_mean_test(pd.Series(y[:49]), dates[:49], horizon=10)
     assert np.isnan(short.p) and np.isnan(short.se) and np.isfinite(short.mean)
@@ -291,18 +295,65 @@ def test_edge_detects_real_edge():
     assert a["p"] < 1e-6
 
 
-def test_edge_test_null_size():
-    """Null calibration: overlapping 10-day sums, random firings -> size <= 8% at 5%."""
-    h, n_dates, n_assets, reps = 10, 1500, 10, 200
-    rng = np.random.default_rng(123)
+def _markov_runs(rng, n_dates, n_assets, run_len=10.0, occupancy=0.03):
+    """On/off Markov firing: mean on-run ``run_len`` days, long-run share ``occupancy``."""
+    p_off = 1.0 / run_len
+    p_on = p_off * occupancy / (1.0 - occupancy)
+    u = rng.random((n_dates, n_assets))
+    s = np.zeros((n_dates, n_assets), dtype=bool)
+    s[0] = u[0] < occupancy
+    for t in range(1, n_dates):
+        s[t] = np.where(s[t - 1], u[t] >= p_off, u[t] < p_on)
+    return s.ravel()
+
+
+def _null_size(regime, reps, seed, h=10, n_dates=1500, n_assets=10):
+    rng = np.random.default_rng(seed)
     dates = np.repeat(pd.bdate_range("2000-01-01", periods=n_dates).values, n_assets)
     rejections = 0
     for _ in range(reps):
         r = rng.normal(0, 0.01, (n_dates + h, n_assets)) + rng.normal(0, 0.01, (n_dates + h, 1))
         c = np.cumsum(r, axis=0)
         v = (c[h:] - c[:-h])[:n_dates].ravel()          # overlapping h-day forward sums
-        f = rng.random(n_dates * n_assets) < 0.3
+        if regime == "iid":
+            f = rng.random(n_dates * n_assets) < 0.3
+        else:
+            f = _markov_runs(rng, n_dates, n_assets)
         res = date_matched_edge_test(per_date_means(v[f], dates[f]),
                                      per_date_means(v, dates), h, int(f.sum()))
         rejections += res.p < 0.05
-    assert rejections / reps <= 0.08
+    return rejections / reps
+
+
+def test_edge_test_null_size():
+    """Null calibration, dense iid firings: size <= 8% at nominal 5%."""
+    assert _null_size("iid", reps=200, seed=123) <= 0.08
+
+
+def test_edge_test_null_size_sparse_runs():
+    """Null calibration, sparse Markov runs (~10-day runs, ~3% occupancy): size <= 8% at 5%."""
+    assert _null_size("markov", reps=300, seed=7) <= 0.08
+
+
+def test_insufficient_when_dates_below_test_minimum():
+    """Rows with >= MIN_N_SLICE dates but < 5*horizon dates have NaN p, so must be insufficient."""
+    dates = pd.bdate_range("2010-01-01", periods=400)
+    assets = [f"S{i}" for i in range(5)]
+    p = pd.MultiIndex.from_product([dates, assets], names=["date", "asset"]).to_frame(index=False)
+    rng = np.random.default_rng(9)
+    p["excess_long_10"] = rng.normal(0, 0.02, len(p)).astype("float32")
+    p["excess_long_20"] = rng.normal(0, 0.02, len(p)).astype("float32")
+    p["market"] = pd.Categorical(["stock"] * len(p))
+    p["split"] = pd.Categorical(["discovery"] * len(p))
+    p["F"] = p["date"].isin(dates[::10][:40]) & p["asset"].isin(assets[:3])   # 40 dates x 3 = 120
+    info = {"F": ("trend", "long")}
+    r10 = solo_table(p, horizon=10, group_by=["market"], signal_info=info).iloc[0]
+    assert r10["n_dates"] == 40 and r10["n_all"] == 120
+    assert np.isnan(r10["p"]) and r10["insufficient"]
+    # 60 dates on 3 of 5 assets (so the date-matched d series is not constant):
+    # enough dates for h=10, not for h=20
+    p["F"] = p["date"].isin(dates[::4][:60]) & p["asset"].isin(assets[:3])
+    r10 = solo_table(p, horizon=10, group_by=["market"], signal_info=info).iloc[0]
+    r20 = solo_table(p, horizon=20, group_by=["market"], signal_info=info).iloc[0]
+    assert np.isfinite(r10["p"]) and not r10["insufficient"]
+    assert np.isnan(r20["p"]) and r20["insufficient"]

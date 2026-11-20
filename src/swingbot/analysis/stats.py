@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 import statsmodels.api as sm
+from scipy import stats
 
 NAN = float("nan")
 
@@ -37,12 +38,24 @@ def min_dates_for_test(horizon: int) -> int:
     return max(3, 5 * int(horizon))
 
 
+def effective_df(n_dates: int, horizon: int) -> int:
+    """t-distribution df for the HAC test: about the number of non-overlapping blocks."""
+    return max(n_dates // (2 * int(horizon)) - 1, 1)
+
+
 def hac_test(daily: pd.Series, horizon: int, n: int) -> TestResult:
     """Test that the mean of a date-sorted per-date series is zero.
 
-    OLS on a constant with Bartlett HAC (Newey-West) errors, ``maxlags = 2*horizon``
-    and t-distribution p-values (df = n_dates - 1), two-sided. se/t/p are NaN
+    OLS on a constant with Bartlett HAC (Newey-West) errors, ``maxlags = 2*horizon``.
+    The two-sided p uses a t distribution with an *effective* df of
+    ``max(n_dates // (2*horizon) - 1, 1)`` (roughly the number of
+    non-overlapping blocks), not ``n_dates - 1``: with overlapping outcomes
+    the HAC se is itself noisy, and the naive df over-rejects. se/t/p are NaN
     when ``n_dates < 5*horizon`` (or < 3) or the series is constant.
+
+    Calibration (size <= ~6-8% at nominal 5%) was checked by simulation only
+    for two regimes: dense iid firings and sparse Markov on/off runs (~10-day
+    runs, ~3% occupancy), h=10, ~1500 dates. It is not claimed in general.
     """
     n_dates = int(len(daily))
     if n_dates == 0:
@@ -56,7 +69,9 @@ def hac_test(daily: pd.Series, horizon: int, n: int) -> TestResult:
     se = float(fit.bse[0])
     if not np.isfinite(se) or se <= 0:
         return TestResult(mean, NAN, NAN, NAN, int(n), n_dates)
-    return TestResult(mean, se, float(fit.tvalues[0]), float(fit.pvalues[0]), int(n), n_dates)
+    t = float(fit.tvalues[0])
+    p = float(2.0 * stats.t.sf(abs(t), effective_df(n_dates, horizon)))
+    return TestResult(mean, se, t, p, int(n), n_dates)
 
 
 def clustered_mean_test(values: pd.Series, dates: pd.Series, horizon: int) -> TestResult:
@@ -65,9 +80,11 @@ def clustered_mean_test(values: pd.Series, dates: pd.Series, horizon: int) -> Te
     NaN values are dropped. Values are averaged per calendar date (removing
     cross-sectional correlation between assets on the same day), the per-date
     means are sorted by date, and an OLS on a constant is fitted with HAC
-    (Newey-West) standard errors with ``maxlags=2*horizon`` and t-distribution
-    p-values (see ``hac_test``), absorbing the autocorrelation from
-    overlapping ``horizon``-day forward returns.
+    (Newey-West) standard errors with ``maxlags=2*horizon``, and the p-value
+    uses a t distribution with effective df ``max(n_dates // (2*horizon) - 1, 1)``
+    (see ``hac_test``, which also lists the regimes where calibration was
+    checked). This absorbs the autocorrelation from overlapping
+    ``horizon``-day forward returns.
 
     ``mean`` is the mean of the per-date means, so it equal-weights *dates*,
     not occurrences: a day with 50 firings counts the same as a day with one.

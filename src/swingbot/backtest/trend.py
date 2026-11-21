@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 
 from swingbot import config
+from swingbot.backtest.rebalance import run_weights
 
 SMA_MONTHS = 10
 COST_PER_SIDE = config.COSTS["stock"] / 2
@@ -47,34 +48,6 @@ def run_portfolio(opens: pd.DataFrame, closes: pd.DataFrame, weights: pd.DataFra
     """Daily equity (start 1.0). Weights dated at a signal close are traded at the next day's open.
 
     Between trades holdings drift with prices. Missing prices are forward-filled (no return).
+    Every column (SHY included) is a traded asset with costs: see ``rebalance.run_weights``.
     """
-    cols = list(weights.columns)
-    o = opens.reindex(columns=cols).ffill().to_numpy(float)
-    c = closes.reindex(columns=cols).ffill().to_numpy(float)
-    days = closes.index
-    trade_at = {}
-    for d, row in weights.iterrows():
-        i = days.searchsorted(d, side="right")  # first trading day after the signal close
-        if i < len(days):
-            trade_at[i] = row.to_numpy(float)
-    first = min(trade_at) if trade_at else len(days)
-    eq = np.full(len(days), np.nan)
-    hold = np.zeros(len(cols))  # value held per asset at the previous close
-    value = 1.0
-    for i in range(first, len(days)):
-        if i in trade_at:
-            if i > first:  # mark holdings from previous close to today's open
-                ratio = np.where(np.isfinite(o[i]) & np.isfinite(c[i - 1]) & (c[i - 1] > 0), o[i] / c[i - 1], 1.0)
-                hold = hold * ratio
-                value = hold.sum()
-            target = trade_at[i] * value
-            turnover = np.abs(target - hold).sum() if i > first else target.sum()
-            value -= turnover * cost_per_side
-            hold = trade_at[i] * value
-            ratio = np.where(np.isfinite(c[i]) & np.isfinite(o[i]) & (o[i] > 0), c[i] / o[i], 1.0)
-        else:
-            ratio = np.where(np.isfinite(c[i]) & np.isfinite(c[i - 1]) & (c[i - 1] > 0), c[i] / c[i - 1], 1.0)
-        hold = hold * ratio
-        value = hold.sum()
-        eq[i] = value
-    return pd.Series(eq, index=days).dropna()
+    return run_weights(opens, closes, weights, cost_per_side, cash_cols=())

@@ -165,3 +165,35 @@ def test_cli_prints_locked(tmp_path, data_dir, monkeypatch, capsys):
     runpy.run_path(str(config._REPO_ROOT / "scripts" / "holdout.py"), run_name="__main__")
     assert "holdout locked: no eligible finalists" in capsys.readouterr().out
     assert not data_dir.exists()
+
+
+def test_direction_mismatch_refused_before_marker(tmp_path, data_dir, monkeypatch):
+    monkeypatch.setattr(holdout, "build_panel", _no_build)
+    csv = _csv(tmp_path, [_gate_row(rule="A", direction="short")])  # A is a long signal
+    with pytest.raises(ValueError, match="direction"):
+        holdout.run_holdout(csv, signal_info=INFO)
+    assert not data_dir.exists()
+    csv = _csv(tmp_path, [_gate_row(kind="pair", rule="A+S", direction="long")])  # S is short
+    with pytest.raises(ValueError, match="direction"):
+        holdout.run_holdout(csv, signal_info=INFO)
+    assert not data_dir.exists()
+
+
+def test_evaluation_error_still_writes_report(tmp_path, data_dir, monkeypatch):
+    store.save_bars("BTCUSDT", "crypto", _bars())
+    panel = _holdout_panel(a_disc=0.01, a_val=0.01)
+    monkeypatch.setattr(holdout, "build_panel", lambda market, allow_holdout=False: panel)
+    real = holdout.simulate
+
+    def flaky(vp, rule, *a, **kw):
+        if rule == "B":
+            raise ZeroDivisionError("boom")
+        return real(vp, rule, *a, **kw)
+
+    monkeypatch.setattr(holdout, "simulate", flaky)
+    csv = _csv(tmp_path, [_gate_row(rule="B"), _gate_row(rule="A")])
+    out = holdout.run_holdout(csv, out_dir=tmp_path / "rep", signal_info=INFO)
+    html = out.read_text(encoding="utf-8")
+    assert "error: ZeroDivisionError: boom" in html
+    assert re.findall(r'<td class="verdict">([^<]*)</td>', html) == ["not confirmed", "confirmed"]
+    assert (data_dir / "holdout_used.json").exists()

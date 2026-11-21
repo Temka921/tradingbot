@@ -5,10 +5,19 @@ import numpy as np
 import pandas as pd
 
 
+ALL_RULE = "__all__"
+
+
 def rule_mask(panel: pd.DataFrame, rule: str) -> np.ndarray:
-    """"a+b" -> A and B both fire; otherwise the single signal column."""
-    cols = rule.split("+")
+    """"a+b" -> A and B both fire; otherwise the single signal column.
+
+    The reserved rule ``ALL_RULE`` ("__all__") selects every row: it is the same-model universe
+    baseline (enter any eligible row, same slots and random fill as the strategy).
+    """
     mask = np.ones(len(panel), dtype=bool)
+    if rule == ALL_RULE:
+        return mask
+    cols = rule.split("+")
     for c in cols:
         mask &= panel[c].astype("boolean").fillna(False).to_numpy(dtype=bool)
     return mask
@@ -118,15 +127,23 @@ def _cagr(s: pd.Series) -> float:
     return float((s.iloc[-1] / s.iloc[0]) ** (1 / years) - 1)
 
 
-def metrics(equity: pd.Series, bench_close: pd.Series | None = None) -> dict:
-    """Summary stats of an equity curve; bench values are NaN without ``bench_close``."""
-    nan = float("nan")
-    me = equity.resample("ME").last().dropna()
+def _sharpe_monthly(s: pd.Series) -> float:
+    """Annualised Sharpe of month-end returns (zero rate), first partial month included."""
+    me = s.resample("ME").last().dropna()
     prev = me.shift(1)
-    prev.iloc[0] = equity.iloc[0]  # include the first partial month
+    prev.iloc[0] = s.iloc[0]  # include the first partial month
     monthly = (me / prev - 1.0)
     sd = monthly.std()
-    sharpe = float(monthly.mean() / sd * np.sqrt(12)) if len(monthly) > 1 and sd > 0 else nan
+    return float(monthly.mean() / sd * np.sqrt(12)) if len(monthly) > 1 and sd > 0 else float("nan")
+
+
+def metrics(equity: pd.Series, bench_close: pd.Series | None = None) -> dict:
+    """Summary stats of an equity curve; bench values are NaN without ``bench_close``.
+
+    ``sharpe_monthly`` and ``bench_sharpe_monthly`` use the same month-end method.
+    """
+    nan = float("nan")
+    sharpe = _sharpe_monthly(equity)
     exposure = float(equity.attrs.get("exposure", nan))
     out = {
         "total_return": float(equity.iloc[-1] / equity.iloc[0] - 1),
@@ -136,6 +153,7 @@ def metrics(equity: pd.Series, bench_close: pd.Series | None = None) -> dict:
         "n_trades": equity.attrs.get("n_trades", nan),
         "exposure": exposure,
         "bench_total_return": nan, "bench_cagr": nan, "bench_max_drawdown": nan,
+        "bench_sharpe_monthly": nan,
     }
     if bench_close is not None:
         b = bench_close.dropna()
@@ -144,6 +162,7 @@ def metrics(equity: pd.Series, bench_close: pd.Series | None = None) -> dict:
             out["bench_total_return"] = float(b.iloc[-1] / b.iloc[0] - 1)
             out["bench_cagr"] = _cagr(b)
             out["bench_max_drawdown"] = _max_dd(b)
+            out["bench_sharpe_monthly"] = _sharpe_monthly(b)
     return out
 
 

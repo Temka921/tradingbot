@@ -19,13 +19,12 @@ from jinja2 import Environment
 from swingbot import config
 from swingbot.analysis.pairs import pair_table
 from swingbot.analysis.solo import SIGNAL_INFO, solo_table
-from swingbot.analysis.views import PRIMARY, universe_views
+from swingbot.analysis.views import MARKET_OF_VIEW, PRIMARY, universe_views
 from swingbot.backtest.portfolio import metrics, simulate, yearly_returns
 from swingbot.data import store
 from swingbot.panel import build_panel
 
 MARKER_NAME = "holdout_used.json"
-MARKET_OF_VIEW = {"etf": "stock", "stock": "stock", "crypto": "crypto"}
 P_CONFIRM = 0.10
 LOCKED_MSG = "holdout locked: no eligible finalists"
 NAN = float("nan")
@@ -103,26 +102,37 @@ def _evaluate(views: dict[str, pd.DataFrame], eligible: pd.DataFrame, horizon: i
         row = {"view": view, "kind": kind, "rule": rule, "direction": direction,
                "n": None, "n_dates": None, "edge": NAN, "p": NAN, "mean_ret": NAN,
                "mean_excess": NAN, "metrics": {}, "yearly": "", "verdict": "not confirmed", "reason": ""}
-        vp = views.get(view)
-        if vp is None or not (vp["split"] == "holdout").any():
-            row["reason"] = f"view {view} not in the holdout panel"
-            out.append(row)
-            continue
-        row.update(_edge_stats(vp, kind, rule, horizon, signal_info, edge_cache.setdefault(view, {})))
-        _, equity = simulate(vp, rule, direction, "holdout", horizon)
-        if len(equity) > 1:
-            row["metrics"] = metrics(equity, _bench(MARKET_OF_VIEW[view], bench_cache))
-            yr = yearly_returns(equity)
-            row["yearly"] = ", ".join(f"{y}: {r * 100:.1f}%" for y, r in yr.items())
-        row["verdict"] = verdict(row["edge"], row["p"], row["mean_ret"])
-        if row.pop("insufficient"):
-            # CLAUDE.md: insufficient rows are never ranked as winners
+        try:
+            _evaluate_rule(row, views, horizon, signal_info, edge_cache, bench_cache)
+        except Exception as e:  # noqa: BLE001 - the holdout is spent: always leave a record
+            row.pop("insufficient", None)
             row["verdict"] = "not confirmed"
-            row["reason"] = "insufficient occurrences on the holdout"
-        elif row["verdict"] == "not confirmed":
-            row["reason"] = "needs edge > 0, p < 0.10 and mean return > 0"
+            row["reason"] = f"error: {type(e).__name__}: {e}"
         out.append(row)
     return out
+
+
+def _evaluate_rule(row: dict, views: dict[str, pd.DataFrame], horizon: int, signal_info,
+                   edge_cache: dict, bench_cache: dict) -> None:
+    """Fill ``row`` in place with the holdout stats, backtest and verdict of one rule."""
+    view, kind, rule, direction = row["view"], row["kind"], row["rule"], row["direction"]
+    vp = views.get(view)
+    if vp is None or not (vp["split"] == "holdout").any():
+        row["reason"] = f"view {view} not in the holdout panel"
+        return
+    row.update(_edge_stats(vp, kind, rule, horizon, signal_info, edge_cache.setdefault(view, {})))
+    _, equity = simulate(vp, rule, direction, "holdout", horizon)
+    if len(equity) > 1:
+        row["metrics"] = metrics(equity, _bench(MARKET_OF_VIEW[view], bench_cache))
+        yr = yearly_returns(equity)
+        row["yearly"] = ", ".join(f"{y}: {r * 100:.1f}%" for y, r in yr.items())
+    row["verdict"] = verdict(row["edge"], row["p"], row["mean_ret"])
+    if row.pop("insufficient"):
+        # CLAUDE.md: insufficient rows are never ranked as winners
+        row["verdict"] = "not confirmed"
+        row["reason"] = "insufficient occurrences on the holdout"
+    elif row["verdict"] == "not confirmed":
+        row["reason"] = "needs edge > 0, p < 0.10 and mean return > 0"
 
 
 def _bps(v) -> str:
@@ -154,7 +164,7 @@ versus buy-and-hold of the market benchmark over the same dates. This is a resea
 <tr><th>View</th><th>Kind</th><th>Rule</th><th>Dir</th><th>n</th><th>Dates</th><th>Edge (bps)</th><th>p</th>
 <th>Mean return (bps)</th><th>Mean excess (bps)</th><th>Total return</th><th>CAGR</th><th>Max DD</th>
 <th>Sharpe (monthly)</th><th>Trades</th><th>Exposure</th><th>Bench total</th><th>Bench CAGR</th>
-<th>Bench max DD</th><th>Per year</th><th>Verdict</th><th>Reason</th></tr>
+<th>Bench max DD</th><th>Bench Sharpe</th><th>Per year</th><th>Verdict</th><th>Reason</th></tr>
 {% for r in rows %}<tr><td class="l">{{ r.view }}</td><td class="l">{{ r.kind }}</td><td class="l">{{ r.rule }}</td>
 <td class="l">{{ r.direction }}</td>{% for c in r.cells %}<td>{{ c }}</td>{% endfor %}
 <td class="l">{{ r.yearly }}</td><td class="verdict">{{ r.verdict }}</td><td class="l">{{ r.reason }}</td></tr>
@@ -174,7 +184,7 @@ def _render(rows: list[dict], out_path: Path, stamp: str, run_at: str, finalists
                  _num(m.get("sharpe_monthly"), 2),
                  "n/a" if pd.isna(m.get("n_trades", NAN)) else int(m["n_trades"]),
                  _pct(m.get("exposure")), _pct(m.get("bench_total_return")), _pct(m.get("bench_cagr")),
-                 _pct(m.get("bench_max_drawdown"))]
+                 _pct(m.get("bench_max_drawdown")), _num(m.get("bench_sharpe_monthly"), 2)]
         shown.append({**r, "cells": cells})
     html = Environment(autoescape=True).from_string(_TEMPLATE).render(
         rows=shown, stamp=stamp, run_at=run_at, finalists_csv=str(finalists_csv), horizon=horizon,
@@ -190,8 +200,10 @@ def run_holdout(finalists_csv: Path, horizon: int = 10, out_dir: Path | None = N
 
     Refusal order: (1) no eligible finalist -> print ``LOCKED_MSG``, return None, touch
     nothing; (2) marker exists -> ``RuntimeError("holdout already used on <timestamp>")``;
-    (3) write the marker; (4) build holdout panels only for the markets the eligible views
-    need. Returns the report path (``out_dir`` defaults to the repo's ``reports/``).
+    (3) pre-flight: unknown signals or a CSV direction that differs from a signal's registry
+    direction raise ValueError; (4) write the marker; (5) build holdout panels only for the markets the eligible views
+    need. An error while evaluating one rule is recorded as "not confirmed" with reason
+    "error: ..." and the report is still written. Returns the report path (``out_dir`` defaults to the repo's ``reports/``).
     ``signal_info`` (default: the signal registry) is passed to the edge tables.
     """
     finalists_csv = Path(finalists_csv)
@@ -209,6 +221,12 @@ def run_holdout(finalists_csv: Path, horizon: int = 10, out_dir: Path | None = N
     unknown = sorted({s for r in rules for s in r["rule"].split("+") if s not in info})
     if unknown:
         raise ValueError(f"finalists CSV names unknown signals {unknown}; holdout not started")
+    # Pre-flight: the CSV direction picks the ret_* column; it must match every signal's registry direction.
+    wrong = [f"{r['rule']} ({r['direction']}): {s} is {info[s][1]}"
+             for r in rules for s in r["rule"].split("+") if info[s][1] != r["direction"]]
+    if wrong:
+        raise ValueError(f"finalists CSV direction does not match the signal registry {wrong}; "
+                         "holdout not started")
     try:
         _write_marker(marker, finalists_csv, horizon, rules)
     except FileExistsError:  # created between the check and the write

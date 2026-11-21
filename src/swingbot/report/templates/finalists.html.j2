@@ -32,10 +32,12 @@
 
 {% for f in v.finalists %}
 <h3>Finalist: {{ f.rule }} ({{ f.direction }})</h3>
+<p><b>Headline (validation, {{ f.n_runs }} robustness runs):</b> {{ f.headline }}.</p>
+{% if f.suspect %}<p class="caveat"><b>{{ suspect_headline }}</b></p>{% endif %}
 {% if f.suspect %}<p class="caveat"><b>{{ suspect_label|safe }}.</b> This finalist is not eligible for the holdout (survivorship).</p>
 {% elif f.eligible %}<p class="status">Eligible for the one-time holdout run.</p>{% endif %}
 
-<h4>Validation backtest</h4>
+<h4>Validation backtest: example run (max_positions 10, seed 0)</h4>
 {% if f.bench_missing %}<p>Benchmark data: benchmark unavailable, so benchmark figures are n/a and the chart has no benchmark line.</p>{% endif %}
 <div class="scroll"><table><tr><th>Metric</th><th>Value</th></tr>
 {% for r in f.val_metrics %}<tr><td>{{ r[0] }}</td><td>{{ r[1] }}</td></tr>{% endfor %}</table></div>
@@ -50,17 +52,23 @@
 <div class="plot">{{ f.disc_chart|safe }}</div>{% else %}<p>No discovery rows.</p>{% endif %}
 
 <h4>Robustness: {{ f.n_runs }} runs</h4>
-<p>Robustness: {{ f.n_runs }} runs (max_positions 8, 10, 12 by seeds 0 to 4), validation split.</p>
+<p>Robustness: {{ f.n_runs }} runs (max_positions 8, 10, 12 by seeds 0 to 4), validation split. {{ robustness_note }}</p>
 <div class="scroll"><table><tr><th></th><th>Min</th><th>Median</th><th>Max</th></tr>
 <tr><td>Total return</td>{% for c in f.rob_ret %}<td>{{ c }}</td>{% endfor %}</tr>
-<tr><td>Sharpe (monthly)</td>{% for c in f.rob_sharpe %}<td>{{ c }}</td>{% endfor %}</tr></table></div>
+<tr><td>Sharpe (monthly)</td>{% for c in f.rob_sharpe %}<td>{{ c }}</td>{% endfor %}</tr>
+<tr><td>Universe baseline total return</td>{% for c in f.rob_base_ret %}<td>{{ c }}</td>{% endfor %}</tr>
+<tr><td>Universe baseline Sharpe (monthly)</td>{% for c in f.rob_base_sharpe %}<td>{{ c }}</td>{% endfor %}</tr>
+<tr><td>Excess vs universe baseline (total return)</td>{% for c in f.rob_excess %}<td>{{ c }}</td>{% endfor %}</tr></table></div>
+<div class="scroll"><table><tr><th>Validation split</th><th>Total return</th><th>Sharpe (monthly)</th></tr>
+{% for r in f.compare %}<tr><td>{{ r[0] }}</td><td>{{ r[1] }}</td><td>{{ r[2] }}</td></tr>{% endfor %}</table></div>
 <details><summary>All {{ f.n_runs }} runs</summary>
-<div class="scroll"><table><tr><th>max_positions</th><th>Seed</th><th>Total return</th><th>Sharpe</th><th>Trades</th></tr>
+<div class="scroll"><table><tr><th>max_positions</th><th>Seed</th><th>Total return</th><th>Sharpe</th><th>Trades</th><th>Baseline total return</th><th>Excess vs baseline</th></tr>
 {% for r in f.rob_rows %}<tr>{% for c in r %}<td>{{ c }}</td>{% endfor %}</tr>{% endfor %}</table></div></details>
 
 <h4>Tail check (2.5/97.5 percentile clip)</h4>
 <p>{{ tail_note }}</p>
-<p>Firings with known return: {{ f.tail.n }}. Mean trade return raw <b>{{ f.tail.raw }} bps</b>, clipped at 2.5/97.5 <b>{{ f.tail.clipped }} bps</b>.{% if f.tail.gone %} <b>The mean is not positive after clipping: the edge is tail-driven.</b>{% endif %}</p>
+<p>Firings with known return: {{ f.tail.n }} on {{ f.tail.n_dates }} dates. Date-weighted mean return raw <b>{{ f.tail.raw }} bps</b>, clipped at 2.5/97.5 <b>{{ f.tail.clipped }} bps</b>. Verdict: <b>{{ f.tail.verdict }}</b>.</p>
+<p>Per-firing (occurrence-weighted) mean return: {{ f.tail.occ_mean }} bps. Share of firings on the busiest {{ f.tail.busy_pct }} of dates (by firing count): {{ f.tail.busy_share }}. Firings cluster on stress days; the slot limit caps entries on those days.</p>
 {% endfor %}
 {% endfor %}
 

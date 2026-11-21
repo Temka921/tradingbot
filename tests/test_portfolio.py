@@ -137,3 +137,21 @@ def test_equity_curves_concat():
     _, e1 = simulate(p, "A", "long", "validation", seed=1)
     assert pd.concat([e0, e1], axis=1).shape == (40, 2)
     assert len(pd.concat({"a": e0, "b": e1})) == 80
+
+
+def test_rule_mask_all_selects_every_row():
+    p = pd.DataFrame({"A": [True, False, False]})
+    assert rule_mask(p, "__all__").tolist() == [True, True, True]
+
+
+def test_metrics_bench_sharpe_monthly():
+    idx = pd.to_datetime(["2020-01-31", "2020-02-29", "2020-03-31", "2021-01-31"])
+    eq = pd.Series([1.0, 1.2, 0.9, 1.5], index=idx)
+    bench = pd.Series([100.0, 110.0, 99.0, 200.0], index=idx)
+    m = metrics(eq, bench)
+    me = bench.resample("ME").last().dropna()
+    prev = me.shift(1)
+    prev.iloc[0] = bench.iloc[0]
+    mo = me / prev - 1.0
+    assert m["bench_sharpe_monthly"] == pytest.approx(mo.mean() / mo.std() * np.sqrt(12))
+    assert np.isnan(metrics(eq)["bench_sharpe_monthly"])

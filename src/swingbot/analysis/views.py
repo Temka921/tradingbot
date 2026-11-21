@@ -7,6 +7,7 @@ import pandas as pd
 VIEWS = ("etf", "crypto", "stock")
 PRIMARY = ("etf", "crypto")
 SUSPECT = ("stock",)
+MARKET_OF_VIEW = {"etf": "stock", "stock": "stock", "crypto": "crypto"}  # market panel each view comes from
 SEGMENT_KEY = {"etf": "sector", "crypto": "cap_bucket", "stock": "sector"}
 
 

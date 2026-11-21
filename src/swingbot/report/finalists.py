@@ -11,24 +11,43 @@ import plotly.graph_objects as go
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from swingbot import config
+from swingbot.analysis.solo import clip_bounds, clip_values, date_weighted_mean
 from swingbot.analysis.validation import GATE_COLS, validation_gate
-from swingbot.analysis.views import PRIMARY, SUSPECT, universe_views
-from swingbot.backtest.portfolio import metrics, rule_mask, simulate, yearly_returns
+from swingbot.analysis.views import MARKET_OF_VIEW, PRIMARY, SUSPECT, universe_views
+from swingbot.backtest.portfolio import ALL_RULE, metrics, rule_mask, simulate, yearly_returns
 from swingbot.data import store
 from swingbot.report.build import CDN_URL, SHORT_NOTE, SUSPECT_LABEL, SURVIVORSHIP, stock_mean_text
 
 MAX_POSITIONS_GRID = (8, 10, 12)
 SEEDS = tuple(range(5))
 CLIP_LO_HI = (2.5, 97.5)
+BUSY_DATE_SHARE = 0.05
 SIZING_NOTE = (
     "Backtests use fixed-horizon equal-slot sizing (max_positions equal slots, entry at the next open, exit at "
     "the close of day t+h, one random draw per day when signals exceed free slots) instead of the spec's "
     "ATR-stop / 1%-risk sizing: the fixed-horizon exit is what the statistics actually tested. Costs are "
-    "config.COSTS only; capacity, market impact and slippage beyond that are not modelled. Discovery-split "
-    "backtests are in-sample and shown only for reference.")
-TAIL_NOTE = ("Tail check: mean of the validation-split trade returns of every firing with a known return (not "
-             "only the simulated, slot-limited trades), raw versus clipped at the 2.5th/97.5th percentiles. A "
-             "clipped mean far below the raw mean means the edge is tail-driven.")
+    "config.COSTS only; capacity, market impact and slippage beyond that are not modelled. The equity curve "
+    "is realized P&L: each trade's result is booked on its exit date and open positions are not marked to "
+    "market, so max drawdown and Sharpe understate the risk actually carried. Discovery-split backtests are "
+    "in-sample and shown only for reference.")
+TAIL_NOTE = (
+    "Tail check on every validation-split firing with a known return (not only the slot-limited simulated "
+    "trades). Returns are first clipped at the gate's pooled 0.1/99.9 percentile bounds over the whole "
+    "split, and means are date-weighted (mean of per-date means), exactly as in the gate, so the raw figure "
+    "equals the gate's validation mean return. The clipped figure is the same date-weighted mean after also "
+    "clipping the firings' returns at their own 2.5th/97.5th percentiles. Verdict: \"mean not positive\" "
+    "when the raw mean is not above 0; \"not tail-driven\" when the clipped mean keeps more than half of the "
+    "raw mean; otherwise \"tail-driven\". The per-firing (occurrence-weighted) mean is shown separately: "
+    "firings cluster on stress days (many assets trigger on the same sell-off), so it can differ sharply "
+    "from the date-weighted mean. The backtest's slot limit caps how many of those same-day firings are "
+    "actually entered.")
+ROBUSTNESS_NOTE = (
+    "The spread across seeds comes from the random daily fill (which of the day's signals get the free "
+    "slots); the spread across max_positions from capacity. The universe baseline enters any eligible row "
+    "of the view with the same direction, slots, seeds and fill, so strategy minus baseline is the rule's "
+    "value over just being in this universe.")
+SUSPECT_HEADLINE = ("Outperformance vs SPY is within the survivorship drift of this universe; judge it "
+                    "against the universe baseline, and treat the whole result as suspect.")
 HOLDOUT_LOCKED = "Holdout locked: no finalist from the primary views (ETF, crypto) passed validation."
 _TEMPLATES = Path(__file__).parent / "templates"
 
@@ -103,6 +122,7 @@ def _metric_rows(m: dict) -> list[list[str]]:
     for key, label in (("bench_total_return", "Benchmark total return"), ("bench_cagr", "Benchmark CAGR"),
                        ("bench_max_drawdown", "Benchmark max drawdown")):
         rows.append([label, _num(m[key], "pct")])
+    rows.append(["Benchmark Sharpe (monthly)", _num(m["bench_sharpe_monthly"], "num")])
     return rows
 
 
@@ -110,18 +130,59 @@ def _split_slice(bench: pd.Series | None, equity: pd.Series) -> pd.Series | None
     return None if bench is None else bench.loc[equity.index[0]:equity.index[-1]]
 
 
-def _tail(panel: pd.DataFrame, rule: str, direction: str, horizon: int) -> dict:
+def tail_verdict(raw: float, clipped: float) -> str:
+    """"mean not positive" (raw <= 0 or NaN), "not tail-driven" (clipped > raw / 2), else "tail-driven"."""
+    if not raw > 0:
+        return "mean not positive"
+    return "not tail-driven" if clipped > 0.5 * raw else "tail-driven"
+
+
+def tail_check(panel: pd.DataFrame, rule: str, direction: str, horizon: int) -> dict:
+    """Date-weighted tail check of ``rule`` on the validation split.
+
+    ``ret_{direction}_{horizon}`` is clipped with the gate's pooled ``clip_bounds`` over every
+    validation row, then restricted to the rule's firings with a known return. ``raw`` is the
+    date-weighted mean (equals the gate's ``val_mean_ret``); ``clipped`` is the date-weighted
+    mean after also clipping the firings at their own CLIP_LO_HI percentiles. ``occ_mean`` is the
+    per-firing mean and ``busy_share`` the share of firings on the busiest BUSY_DATE_SHARE of
+    firing dates (by firing count, at least one date).
+    """
     p = panel.loc[(panel["split"] == "validation").to_numpy()]
-    r = p[f"ret_{direction}_{horizon}"].to_numpy(dtype="float64")[rule_mask(p, rule)]
-    r = r[~np.isnan(r)]
+    r_all = p[f"ret_{direction}_{horizon}"].to_numpy(dtype="float64")
+    r_all = clip_values(r_all, clip_bounds(r_all))
+    keep = rule_mask(p, rule) & ~np.isnan(r_all)
+    r, d = r_all[keep], p["date"].to_numpy()[keep]
     if not len(r):
-        return {"n": 0, "raw": np.nan, "clipped": np.nan, "lo": np.nan, "hi": np.nan}
+        return {"n": 0, "n_dates": 0, "raw": np.nan, "clipped": np.nan, "occ_mean": np.nan,
+                "busy_share": np.nan, "verdict": tail_verdict(np.nan, np.nan)}
     lo, hi = np.percentile(r, CLIP_LO_HI)
-    return {"n": len(r), "raw": float(r.mean()), "clipped": float(np.clip(r, lo, hi).mean()),
-            "lo": float(lo), "hi": float(hi)}
+    raw = date_weighted_mean(r, d)
+    clipped = date_weighted_mean(np.clip(r, lo, hi), d)
+    counts = pd.Series(d).value_counts()
+    k = max(1, int(np.ceil(BUSY_DATE_SHARE * len(counts))))
+    return {"n": len(r), "n_dates": len(counts), "raw": raw, "clipped": clipped,
+            "occ_mean": float(r.mean()), "busy_share": float(counts.nlargest(k).sum() / len(r)),
+            "verdict": tail_verdict(raw, clipped)}
 
 
-def _finalist_block(panel: pd.DataFrame, g: dict, view: str, horizon: int, bench: pd.Series | None):
+def _bps(v) -> str:
+    return _num(v * 1e4 if v is not None and not pd.isna(v) else np.nan, "num")
+
+
+def _baseline_runs(panel: pd.DataFrame, direction: str, horizon: int) -> pd.DataFrame:
+    """Same-model universe baseline (rule ``ALL_RULE``) over the max_positions x seeds grid."""
+    runs = []
+    for mp in MAX_POSITIONS_GRID:
+        for sd in SEEDS:
+            _, eq = simulate(panel, ALL_RULE, direction, "validation", horizon, max_positions=mp, seed=sd)
+            m = metrics(eq)
+            runs.append({"max_positions": mp, "seed": sd, "baseline_total_return": m["total_return"],
+                         "baseline_sharpe": m["sharpe_monthly"]})
+    return pd.DataFrame(runs)
+
+
+def _finalist_block(panel: pd.DataFrame, g: dict, view: str, horizon: int, bench: pd.Series | None,
+                    baseline: pd.DataFrame):
     rule, direction = g["rule"], g["direction"]
     t_val, eq_val = simulate(panel, rule, direction, "validation", horizon)
     m_val = metrics(eq_val, _split_slice(bench, eq_val))
@@ -140,16 +201,25 @@ def _finalist_block(panel: pd.DataFrame, g: dict, view: str, horizon: int, bench
             runs.append({"view": view, "rule": rule, "direction": direction, "max_positions": mp, "seed": sd,
                          "total_return": m["total_return"], "sharpe_monthly": m["sharpe_monthly"],
                          "n_trades": m["n_trades"]})
-    rob = pd.DataFrame(runs)
+    rob = pd.DataFrame(runs).merge(baseline, on=["max_positions", "seed"], how="left")
+    rob["excess_vs_baseline"] = rob["total_return"] - rob["baseline_total_return"]
 
     def agg(col, kind):
         s = rob[col].dropna()
         return [_num(s.min(), kind), _num(s.median(), kind), _num(s.max(), kind)] if len(s) else ["n/a"] * 3
 
-    tail = _tail(panel, rule, direction, horizon)
+    def med(col, kind):
+        s = rob[col].dropna()
+        return _num(s.median(), kind) if len(s) else "n/a"
+
+    tail = tail_check(panel, rule, direction, horizon)
+    rob_ret, rob_ex = agg("total_return", "pct"), agg("excess_vs_baseline", "pct")
     block = {
         "rule": rule, "direction": direction, "view": view,
         "suspect": view in SUSPECT, "eligible": bool(g["holdout_eligible"]),
+        "headline": (f"median total return {rob_ret[1]} (range {rob_ret[0]} to {rob_ret[2]}); "
+                     f"median excess over the universe baseline {rob_ex[1]} "
+                     f"(range {rob_ex[0]} to {rob_ex[2]})"),
         "val_metrics": _metric_rows(m_val), "bench_missing": bench is None,
         "val_chart": _equity_chart(eq_val, bench, f"Validation equity: {rule} ({view})"),
         "years": years,
@@ -157,12 +227,20 @@ def _finalist_block(panel: pd.DataFrame, g: dict, view: str, horizon: int, bench
         "disc_chart": _equity_chart(eq_disc, bench, f"Discovery equity (in-sample): {rule} ({view})")
         if m_disc else "",
         "n_runs": len(rob),
-        "rob_ret": agg("total_return", "pct"), "rob_sharpe": agg("sharpe_monthly", "num"),
+        "rob_ret": rob_ret, "rob_sharpe": agg("sharpe_monthly", "num"), "rob_excess": rob_ex,
+        "rob_base_ret": agg("baseline_total_return", "pct"), "rob_base_sharpe": agg("baseline_sharpe", "num"),
+        "compare": [["Strategy (median of runs)", med("total_return", "pct"), med("sharpe_monthly", "num")],
+                    ["Universe baseline, same model (median of runs)", med("baseline_total_return", "pct"),
+                     med("baseline_sharpe", "num")],
+                    ["Benchmark buy-and-hold (" + config.BENCHMARK[MARKET_OF_VIEW[view]] + ")",
+                     _num(m_val["bench_total_return"], "pct"), _num(m_val["bench_sharpe_monthly"], "num")]],
         "rob_rows": [[str(r.max_positions), str(r.seed), _num(r.total_return, "pct"),
-                      _num(r.sharpe_monthly, "num"), _num(r.n_trades, "int")] for r in rob.itertuples()],
-        "tail": {"n": tail["n"], "raw": _num(tail["raw"] * 1e4 if not np.isnan(tail["raw"]) else np.nan, "num"),
-                 "clipped": _num(tail["clipped"] * 1e4 if not np.isnan(tail["clipped"]) else np.nan, "num"),
-                 "gone": bool(tail["n"] and not tail["clipped"] > 0)},
+                      _num(r.sharpe_monthly, "num"), _num(r.n_trades, "int"), _num(r.baseline_total_return, "pct"),
+                      _num(r.excess_vs_baseline, "pct")] for r in rob.itertuples()],
+        "tail": {"n": tail["n"], "n_dates": tail["n_dates"], "raw": _bps(tail["raw"]),
+                 "clipped": _bps(tail["clipped"]), "verdict": tail["verdict"], "occ_mean": _bps(tail["occ_mean"]),
+                 "busy_share": _num(tail["busy_share"], "pct"),
+                 "busy_pct": f"{BUSY_DATE_SHARE * 100:.0f}%"},
     }
     return block, rob
 
@@ -187,11 +265,13 @@ def build_finalists_report(panels: dict[str, pd.DataFrame], out_path: Path, hori
         panel = all_views.pop(view)                      # one view at a time; freed before the next
         gate = validation_gate(panel, view, horizon, signal_info)
         gates.append(gate)
-        market = "crypto" if view == "crypto" else "stock"
-        bench = _bench(market, bench_cache)
+        bench = _bench(MARKET_OF_VIEW[view], bench_cache)
         blocks = []
+        baselines: dict[str, pd.DataFrame] = {}          # per direction, shared by this view's finalists
         for g in gate[gate["finalist"]].to_dict("records"):
-            block, rob = _finalist_block(panel, g, view, horizon, bench)
+            if g["direction"] not in baselines:
+                baselines[g["direction"]] = _baseline_runs(panel, g["direction"], horizon)
+            block, rob = _finalist_block(panel, g, view, horizon, bench, baselines[g["direction"]])
             blocks.append(block)
             robs.append(rob)
         views.append({"view": view, "suspect": view in SUSPECT, "primary": view in PRIMARY,
@@ -203,8 +283,9 @@ def build_finalists_report(panels: dict[str, pd.DataFrame], out_path: Path, hori
     gate_all = pd.concat(gates, ignore_index=True) if gates else pd.DataFrame(columns=GATE_COLS)
     gate_all = gate_all[GATE_COLS] if len(gate_all) else pd.DataFrame(columns=GATE_COLS)
     gate_all.to_csv(out_path.parent / f"finalists_{stamp}.csv", index=False)
-    rob_cols = ["view", "rule", "direction", "max_positions", "seed", "total_return", "sharpe_monthly", "n_trades"]
-    rob_all = pd.concat(robs, ignore_index=True) if robs else pd.DataFrame(columns=rob_cols)
+    rob_cols = ["view", "rule", "direction", "max_positions", "seed", "total_return", "sharpe_monthly", "n_trades",
+                "baseline_total_return", "baseline_sharpe", "excess_vs_baseline"]
+    rob_all = pd.concat(robs, ignore_index=True)[rob_cols] if robs else pd.DataFrame(columns=rob_cols)
     rob_all.to_csv(out_path.parent / f"finalists_robustness_{stamp}.csv", index=False)
 
     elig = gate_all[gate_all["holdout_eligible"].astype(bool)] if len(gate_all) else gate_all
@@ -213,6 +294,7 @@ def build_finalists_report(panels: dict[str, pd.DataFrame], out_path: Path, hori
     env = Environment(loader=FileSystemLoader(_TEMPLATES), autoescape=select_autoescape(["j2", "html"]))
     page = env.get_template("finalists.html.j2").render(
         survivorship=SURVIVORSHIP.format(stock_mean=stock_mean), sizing_note=SIZING_NOTE, tail_note=TAIL_NOTE,
+        robustness_note=ROBUSTNESS_NOTE, suspect_headline=SUSPECT_HEADLINE,
         short_note=SHORT_NOTE, cdn=CDN_URL, horizon=horizon, stamp=stamp, views=views,
         suspect_label=SUSPECT_LABEL, gate_headers=[h for _, h in GATE_SHOWN],
         eligible=eligible, holdout_locked=HOLDOUT_LOCKED)

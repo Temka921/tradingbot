@@ -113,6 +113,29 @@ def date_matched_edge_test(signal_daily: pd.Series, base_daily: pd.Series,
     return hac_test(d, horizon, n)
 
 
+def diff_test(a: TestResult, b: TestResult, horizon: int) -> TestResult:
+    """Test that ``a.mean - b.mean`` is zero, treating the two estimates as independent.
+
+    se = sqrt(a.se^2 + b.se^2); two-sided p from a t distribution with
+    df = min(effective_df(a.n_dates, h), effective_df(b.n_dates, h)).
+    ``n = a.n + b.n``, ``n_dates = min(a.n_dates, b.n_dates)``. se/t/p are NaN
+    if either se is NaN. When the two series are positively correlated (e.g.
+    same-day edges of overlapping groups) independence overstates the variance,
+    so the test is conservative.
+    """
+    mean = float(a.mean - b.mean)
+    n, n_dates = int(a.n + b.n), int(min(a.n_dates, b.n_dates))
+    if np.isnan(a.se) or np.isnan(b.se) or np.isnan(mean):
+        return TestResult(mean, NAN, NAN, NAN, n, n_dates)
+    se = float(np.sqrt(a.se ** 2 + b.se ** 2))
+    if not se > 0:
+        return TestResult(mean, NAN, NAN, NAN, n, n_dates)
+    t = mean / se
+    df = min(effective_df(a.n_dates, horizon), effective_df(b.n_dates, horizon))
+    p = float(2.0 * stats.t.sf(abs(t), df))
+    return TestResult(mean, se, t, p, n, n_dates)
+
+
 def bh_qvalues(p: np.ndarray) -> np.ndarray:
     """Benjamini-Hochberg q-values. NaN p-values stay NaN and do not count toward m."""
     p = np.asarray(p, dtype="float64")

@@ -34,8 +34,11 @@ def simulate(panel: pd.DataFrame, rule: str, direction: str, split: str, horizon
 
     Returns ``(trades, equity)``. ``trades`` has date (signal day), asset, entry_idx (position of
     the entry date in the split's sorted dates), exit_date, ret. ``equity`` starts at 1.0, is
-    indexed by every distinct date of the split, and carries ``attrs`` busy_slots (busy slot
-    count per date), max_positions and n_trades.
+    indexed by every distinct date of the split, and carries scalar ``attrs`` only (so curves
+    concat cleanly): exposure (mean busy slots / max_positions), max_positions and n_trades.
+
+    Only trades with a known ret and exit date reserve slots (skipped trades never occupy one).
+    One asset may hold overlapping positions: each firing is its own trade, as in the statistics.
     """
     ret_col = f"ret_{direction}_{horizon}"
     p = panel.loc[(panel["split"] == split).to_numpy()]
@@ -97,7 +100,8 @@ def simulate(panel: pd.DataFrame, rule: str, direction: str, split: str, horizon
         "ret": ret[rows],
     })
     out = pd.Series(equity, index=dates, name="equity")
-    out.attrs["busy_slots"] = pd.Series(np.cumsum(busy_diff)[:n_dates], index=dates)
+    busy = np.cumsum(busy_diff)[:n_dates]
+    out.attrs["exposure"] = float(busy.mean() / max_positions) if n_dates else float("nan")
     out.attrs["max_positions"] = max_positions
     out.attrs["n_trades"] = len(trades)
     return trades, out
@@ -117,12 +121,13 @@ def _cagr(s: pd.Series) -> float:
 def metrics(equity: pd.Series, bench_close: pd.Series | None = None) -> dict:
     """Summary stats of an equity curve; bench values are NaN without ``bench_close``."""
     nan = float("nan")
-    monthly = equity.resample("ME").last().dropna().pct_change().dropna()
+    me = equity.resample("ME").last().dropna()
+    prev = me.shift(1)
+    prev.iloc[0] = equity.iloc[0]  # include the first partial month
+    monthly = (me / prev - 1.0)
     sd = monthly.std()
     sharpe = float(monthly.mean() / sd * np.sqrt(12)) if len(monthly) > 1 and sd > 0 else nan
-    busy = equity.attrs.get("busy_slots")
-    mp = equity.attrs.get("max_positions")
-    exposure = float((busy / mp).mean()) if busy is not None and mp else nan
+    exposure = float(equity.attrs.get("exposure", nan))
     out = {
         "total_return": float(equity.iloc[-1] / equity.iloc[0] - 1),
         "cagr": _cagr(equity),

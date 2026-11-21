@@ -30,14 +30,13 @@ def test_single_trade_booking():
     trades, eq = simulate(p, "A", "long", "validation", horizon=10, max_positions=10)
     assert len(trades) == 1
     assert trades.iloc[0]["exit_date"] == dates[13]
-    assert eq.index.equals(pd.DatetimeIndex(dates, name="date")) or list(eq.index) == list(dates)
+    assert list(eq.index) == list(dates)
     assert eq.iloc[0] == 1.0
     assert eq[dates[13]] == pytest.approx(1.01)
     assert (eq[: dates[13]].iloc[:-1] == 1.0).all()
     assert np.allclose(eq[dates[13]:].to_numpy(), 1.01)
     assert eq.attrs["n_trades"] == 1
-    assert eq.attrs["busy_slots"][dates[4]] == 1 and eq.attrs["busy_slots"][dates[3]] == 0
-    assert eq.attrs["busy_slots"][dates[14]] == 0
+    assert eq.attrs["exposure"] == pytest.approx(10 / 30 / 10)  # busy dates 4..13
 
 
 def test_too_few_bars_left_skipped():
@@ -55,7 +54,7 @@ def test_capacity_never_exceeded_and_seeded():
     t1, _ = simulate(p, "A", "long", "validation", max_positions=5, seed=1)
     pd.testing.assert_frame_equal(t0, t0b)
     assert not t0[["date", "asset"]].equals(t1[["date", "asset"]])
-    assert e0.attrs["busy_slots"].max() <= 5
+    assert 0 < e0.attrs["exposure"] <= 1.0
     pos = {d: i for i, d in enumerate(dates)}
     occ_incl = np.zeros(len(dates), int)
     for _, r in t0.iterrows():
@@ -87,8 +86,7 @@ def test_split_filter_and_short():
 def test_metrics_hand_example():
     idx = pd.to_datetime(["2020-01-31", "2020-02-29", "2020-03-31", "2021-01-31"])
     eq = pd.Series([1.0, 1.2, 0.9, 1.5], index=idx)
-    eq.attrs["busy_slots"] = pd.Series([0, 5, 10, 5], index=idx)
-    eq.attrs["max_positions"] = 10
+    eq.attrs["exposure"] = float(np.mean([0, 0.5, 1.0, 0.5]))
     eq.attrs["n_trades"] = 7
     bench = pd.Series([100.0, 100.0, 100.0, 200.0], index=idx)
     m = metrics(eq, bench)
@@ -100,7 +98,10 @@ def test_metrics_hand_example():
     assert m["exposure"] == pytest.approx(np.mean([0, 0.5, 1.0, 0.5]))
     assert m["bench_total_return"] == pytest.approx(1.0)
     assert m["bench_max_drawdown"] == pytest.approx(0.0)
-    mo = eq.resample("ME").last().dropna().pct_change().dropna()
+    me = eq.resample("ME").last().dropna()
+    prev = me.shift(1)
+    prev.iloc[0] = eq.iloc[0]
+    mo = me / prev - 1.0
     assert m["sharpe_monthly"] == pytest.approx(mo.mean() / mo.std() * np.sqrt(12))
     m2 = metrics(eq)
     assert np.isnan(m2["bench_cagr"]) and np.isnan(m2["bench_total_return"])
@@ -127,3 +128,12 @@ def test_performance_large():
     t = time.time()
     simulate(p, "A", "long", "validation")
     assert time.time() - t < 30
+
+
+def test_equity_curves_concat():
+    dates = pd.bdate_range("2020-01-01", periods=40)
+    p = mk(dates, [f"S{i}" for i in range(8)], True, 0.01)
+    _, e0 = simulate(p, "A", "long", "validation", seed=0)
+    _, e1 = simulate(p, "A", "long", "validation", seed=1)
+    assert pd.concat([e0, e1], axis=1).shape == (40, 2)
+    assert len(pd.concat({"a": e0, "b": e1})) == 80

@@ -69,17 +69,35 @@ def main():
     ap.add_argument("--holdout", action="store_true")
     args = ap.parse_args()
     etfs = pd.read_csv(config._REPO_ROOT / "universe" / "etfs.csv")["symbol"].tolist()
+    rec = config.DATA_DIR / "holdout_use_etf_trend.json"
     if args.holdout:
-        rec = config.DATA_DIR / "holdout_use_etf_trend.json"
+        missing = [s for s in RULE_A + [CASH] if not (config.DATA_DIR / "raw" / "stock" / f"{s}.parquet").exists()]
+        if missing:
+            raise SystemExit(f"missing data files, holdout NOT used: {missing}")
         if rec.exists():
             raise SystemExit(f"ETF holdout already used: {rec.read_text()}")
         rec.write_text(json.dumps({"utc": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
                                    "who": "user request in chat (option 1: trend-following ETF test)",
                                    "rules": "Rule A Faber GTAA-5 (primary), Rule B all ETFs (secondary)",
                                    "protocol": "docs/superpowers/specs/2026-11-21-trend-etf-protocol.md"}, indent=2))
-    opens, closes = load(etfs, allow_holdout=args.holdout)
-    closes = closes.iloc[:-1] if args.holdout else closes  # newest bar may be partial
+    try:
+        results = run(etfs, args.holdout)
+    except Exception as e:  # a crash after the record still counts as the one use: leave a trace
+        if args.holdout:
+            rec.write_text(json.dumps({**json.loads(rec.read_text()), "error": f"{type(e).__name__}: {e}"}, indent=2))
+        raise
+    if args.holdout:
+        rec.write_text(json.dumps({**json.loads(rec.read_text()), "results": results}, indent=2, default=float))
+        print(f"\nresults saved to {rec}")
+
+
+def run(etfs, holdout):
+    opens, closes = load(etfs, allow_holdout=holdout)
+    closes = closes.iloc[:-1] if holdout else closes  # newest bar may be partial
     opens = opens.loc[closes.index]
+    if holdout:
+        h = closes.loc["2024-01-01":, RULE_A + [CASH]]
+        print("holdout data check: last date", h.index[-1].date(), "| NaN counts", h.isna().sum().to_dict())
     breadth = [s for s in closes.columns if s != CASH]
     curves = {
         "Rule A: trend GTAA-5": strategy(opens, closes, RULE_A, require_all=True),
@@ -91,13 +109,20 @@ def main():
     start = curves["Rule A: trend GTAA-5"].index[0]
     curves = {k: v.loc[start:] for k, v in curves.items()}
     curves["SPY buy-and-hold"] = (spy.loc[start:] / spy.loc[start])
-    periods = ["holdout"] if args.holdout else ["discovery", "validation"]
+    periods = ["holdout"] if holdout else ["discovery", "validation"]
+    shy = closes[CASH] / closes[CASH].loc[start:].iloc[0]
+    out = {}
     for per in periods:
         s, e = PERIODS[per]
         print(f"\n=== {per} ({s or start.date()} to {e or closes.index[-1].date()}) ===")
         rows = {k: period_stats(v, s, e) for k, v in curves.items()}
-        print(pd.DataFrame(rows).T.applymap(lambda x: f"{x:+.1%}" if abs(x) < 50 else f"{x:.2f}").to_string()
-              if hasattr(pd.DataFrame, "applymap") else pd.DataFrame(rows).T.round(3).to_string())
+        for k, v in curves.items():  # information only: Sharpe of monthly returns in excess of SHY
+            if rows[k]:
+                rv = v.loc[s:e].resample("ME").last().pct_change().dropna()
+                rs = shy.loc[s:e].resample("ME").last().pct_change().reindex(rv.index)
+                x = (rv - rs).dropna()
+                rows[k]["sharpe_vs_shy"] = float(x.mean() / x.std() * np.sqrt(12)) if x.std() > 0 else np.nan
+        print(pd.DataFrame(rows).T.round(3).to_string())
         ok_a = passes(rows["Rule A: trend GTAA-5"], rows["Bench 1: hold GTAA-5"])
         ok_b = passes(rows["Rule B: trend all ETFs"], rows["Bench 1B: hold all ETFs"])
         d, t, p = monthly_diff_t(curves["Rule A: trend GTAA-5"], curves["Bench 1: hold GTAA-5"], s, e)
@@ -105,6 +130,8 @@ def main():
         word = "confirmed" if per == "holdout" else "PASS"
         print(f"Rule A {per}: {word if ok_a else 'not ' + word.lower() if per == 'holdout' else 'FAIL'}"
               f" | Rule B (secondary): {'pass' if ok_b else 'fail'}")
+        out[per] = {"table": rows, "rule_a_pass": ok_a, "rule_b_pass": ok_b, "diff_month_t_p": [d, t, p]}
+    return out
 
 
 if __name__ == "__main__":

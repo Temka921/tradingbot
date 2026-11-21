@@ -101,7 +101,7 @@ def test_leaderboard_sort_order():
     t = pd.DataFrame({
         "signal": list("abcde"), "insufficient": [True, False, False, False, False],
         "q": [0.0, 0.2, 0.01, 0.01, np.nan], "edge_vs_all_days": [9.0, 1.0, 0.5, 0.7, 5.0],
-        "mean_all": [1.0, 1.0, 1.0, 1.0, 1.0]})
+        "mean_all": [1.0, 1.0, 1.0, 1.0, 1.0], "mean_ret": [1.0, 1.0, 1.0, 1.0, 1.0]})
     assert list(sort_leaderboard(t)["signal"]) == ["d", "c", "b", "e", "a"]
 
 
@@ -111,7 +111,8 @@ def _verdict_fixture():
         "insufficient": [False, False, False, False, False, True, False],
         "q": [0.001, 0.01, 0.05, 0.05, 0.4, 0.0, np.nan],
         "edge_vs_all_days": [-0.004, 0.002, 0.001, 0.003, 0.01, 0.05, 0.02],
-        "mean_all": [0.002, -0.001, 0.0005, 0.0001, 0.02, 0.05, 0.02]})
+        "mean_all": [0.002, -0.001, 0.0005, 0.0001, 0.02, 0.05, 0.02],
+        "mean_ret": [0.002, 0.001, 0.0005, 0.0001, 0.02, 0.05, 0.02]})
 
 
 def test_verdicts_and_sort():
@@ -171,7 +172,7 @@ def test_quality_count_filters_market():
 def test_verdict_nan_mean_is_not_loses_net():
     from swingbot.report.build import add_verdicts
     t = pd.DataFrame({"signal": ["x"], "insufficient": [False], "q": [0.01],
-                      "edge_vs_all_days": [0.002], "mean_all": [np.nan]})
+                      "edge_vs_all_days": [0.002], "mean_all": [np.nan], "mean_ret": [0.01]})
     assert add_verdicts(t)["verdict"].iloc[0] == "not significant"
 
 
@@ -192,7 +193,8 @@ def test_rendered_verdicts_not_counted_as_hits(tmp_path):
     assert lb.loc[neg, "verdict"] == "significant negative edge (avoid)"
     assert lb.loc[pos, "verdict"] == "beats same-day avg but loses net of costs"
     assert (lb["verdict"] == "candidate").sum() == int(
-        ((~lb["insufficient"]) & (lb["q"] < 0.10) & (lb["edge_vs_all_days"] > 0) & (lb["mean_all"] > 0)).sum())
+        ((~lb["insufficient"]) & (lb["q"] < 0.10) & (lb["edge_vs_all_days"] > 0) & (lb["mean_all"] > 0)
+         & (lb["mean_ret"] > 0)).sum())
     assert "with q &lt; 0.10" not in html
     assert re.search(r"candidate: \d+", html)
     assert "cost-neutral" in html
@@ -353,3 +355,51 @@ def test_analyze_script_missing_market(tmp_path, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "SKIP crypto" in out
     assert list((tmp_path / "reports").glob("solo_report_*.html"))
+
+
+# ---------- final review F1: candidate needs absolute profit too ----------
+
+def _sig_row(**kw):
+    base = {"signal": "x", "insufficient": False, "q": 0.01, "edge_vs_all_days": 0.002,
+            "mean_all": 0.003, "mean_ret": 0.003}
+    base.update(kw)
+    return base
+
+
+def test_candidate_needs_positive_absolute_return():
+    from swingbot.report.build import add_verdicts
+    t = pd.DataFrame([_sig_row(signal="cand"),
+                      _sig_row(signal="ret_neg", mean_ret=-0.0140),      # beats bench, loses as a plain trade
+                      _sig_row(signal="exc_neg", mean_all=-0.001)])
+    v = add_verdicts(t).set_index("signal")["verdict"]
+    assert v["cand"] == "candidate"
+    assert v["ret_neg"] == "beats same-day avg but loses net of costs"
+    assert v["exc_neg"] == "beats same-day avg but loses net of costs"
+
+
+def test_nan_mean_ret_is_never_candidate():
+    from swingbot.report.build import add_verdicts
+    t = pd.DataFrame([_sig_row(mean_ret=np.nan)])
+    assert add_verdicts(t)["verdict"].iloc[0] != "candidate"
+    no_col = pd.DataFrame([_sig_row()]).drop(columns="mean_ret")      # old frames: unknown, never candidate
+    assert add_verdicts(no_col)["verdict"].iloc[0] != "candidate"
+
+
+def test_rendered_positive_excess_negative_ret_not_candidate(tmp_path):
+    from swingbot.report.build import SHORT_NOTE
+    panels = {"stock": make_market_panel("stock", seed=1)}
+    p = panels["stock"]
+    pos = list(SIGNAL_INFO)[2]
+    side = SIGNAL_INFO[pos][1]
+    ecol, rcol = f"excess_{side}_10", f"ret_{side}_10"
+    p[ecol] = p[ecol].astype("float64")
+    p.loc[p[pos], ecol] += 0.03                       # strong positive excess and edge
+    p[rcol] = (p[rcol] - 0.05).astype("float32")      # but every plain trade loses money
+    html = build_report(panels, tmp_path / "r.html", as_of="2026-01-01").read_text(encoding="utf-8")
+    lb = pd.read_csv(tmp_path / "solo_leaderboard_stock_2026-01-01.csv").set_index("signal")
+    r = lb.loc[pos]
+    assert r["q"] < 0.10 and r["edge_vs_all_days"] > 0 and r["mean_all"] > 0 and r["mean_ret"] < 0
+    assert r["verdict"] == "beats same-day avg but loses net of costs"
+    assert "Mean return net of costs, absolute (bps)" in html
+    assert "loses net of costs in absolute terms or versus the benchmark" in html
+    assert SHORT_NOTE in html and "futures" in SHORT_NOTE and "not modelled" in SHORT_NOTE

@@ -26,11 +26,12 @@ def synth(plant_a: float = 0.0, plant_b: float = 0.0, plant_ab: float = 0.0,
             p[f"excess_{side}_{h}"] = rng.normal(0, 0.02, n)
             p[f"ret_{side}_{h}"] = rng.normal(0, 0.02, n)
     a, b = p["A"].to_numpy(), p["B"].to_numpy()
-    y = p["excess_long_10"].to_numpy().copy()
-    y[a] += plant_a
-    y[b] += plant_b
-    y[a & b] += plant_ab
-    p["excess_long_10"] = y
+    for col in ("excess_long_10", "ret_long_10"):      # excess = ret - benchmark: plants move both
+        y = p[col].to_numpy().copy()
+        y[a] += plant_a
+        y[b] += plant_b
+        y[a & b] += plant_ab
+        p[col] = y
     p["market"] = "crypto"
     p["sector"] = "Tech"
     p["cap_bucket"] = "large"
@@ -48,7 +49,7 @@ def synth3(plant_abc: float = 0.0, fire: float = 0.35, n_dates: int = 600, n_ass
            seed: int = 11) -> pd.DataFrame:
     """Three long signals A, B, C (and one short S) firing independently at ``fire``.
 
-    ``plant_abc`` is added to excess_long_10 only on rows where A, B and C all fire.
+    ``plant_abc`` is added to excess_long_10 and ret_long_10 only on rows where A, B and C all fire.
     The fire rate and size are chosen so the ABC group clears MIN_N rows and dates.
     """
     rng = np.random.default_rng(seed)
@@ -63,9 +64,10 @@ def synth3(plant_abc: float = 0.0, fire: float = 0.35, n_dates: int = 600, n_ass
             p[f"excess_{side}_{h}"] = rng.normal(0, 0.02, n)
             p[f"ret_{side}_{h}"] = rng.normal(0, 0.02, n)
     abc = (p["A"] & p["B"] & p["C"]).to_numpy()
-    y = p["excess_long_10"].to_numpy().copy()
-    y[abc] += plant_abc
-    p["excess_long_10"] = y
+    for col in ("excess_long_10", "ret_long_10"):
+        y = p[col].to_numpy().copy()
+        y[abc] += plant_abc
+        p[col] = y
     p["split"] = pd.Categorical(["discovery"] * n)
     return p
 
@@ -167,7 +169,7 @@ def test_rows_mask_restricts_rows():
 def _row(**kw):
     base = {"a": "A", "b": "B", "family_a": "meanrev", "family_b": "trend", "direction": "long",
             "jaccard": 0.1, "n_ab": 500, "n_dates_ab": 300, "n_a_only": 500, "n_b_only": 500,
-            "mean_ab": 0.01, "edge_ab": 0.01, "t_ab": 3.0, "p_ab": 0.01, "q_ab": 0.01,
+            "mean_ab": 0.01, "mean_ret_ab": 0.01, "edge_ab": 0.01, "t_ab": 3.0, "p_ab": 0.01, "q_ab": 0.01,
             "edge_a_only": 0.0, "edge_b_only": 0.0, "cond_a_given_b": 0.01, "cond_b_given_a": 0.01,
             "lift": 0.01, "t_lift": 3.0, "p_lift": 0.01, "q_lift": 0.01,
             "insufficient": False, "verdict": ""}
@@ -319,3 +321,87 @@ def test_jaccard_matrix_values_and_split():
     assert j.loc["A", "S"] == 0.0 and j.loc["S", "S"] == 1.0
     p2 = p.copy(); p2["B"] = False
     assert np.isnan(jaccard_matrix(p2, signal_info=INFO).loc["B", "S"])
+
+
+# --- final review F1: synergy needs absolute profit too; F2: regime slices do not re-clip ------
+
+def test_mean_ret_columns_follow_excess_means():
+    for cols, m, r in ((PAIR_COLS, "mean_ab", "mean_ret_ab"), (TRIPLE_COLS, "mean_abc", "mean_ret_abc"),
+                       (REGIME_COLS, "mean_ab", "mean_ret_ab")):
+        assert cols.index(r) == cols.index(m) + 1
+
+
+def test_pair_positive_excess_negative_ret_is_not_synergy():
+    p = synth(plant_ab=+0.03)
+    both = (p["A"] & p["B"]).to_numpy()
+    y = p["ret_long_10"].to_numpy().copy()
+    y[both] -= 0.06                                # beats the benchmark, loses as a plain trade
+    p["ret_long_10"] = y
+    r = pair_table(p, 10, signal_info=INFO).query("a == 'A' and b == 'B'").iloc[0]
+    assert r.q_lift < 0.10 and r.lift > 0 and r.mean_ab > 0 and r.mean_ret_ab < 0
+    assert r.verdict == "not significant"
+
+
+def test_triple_positive_excess_negative_ret_is_not_synergy():
+    p = synth3(plant_abc=+0.04)
+    abc = (p["A"] & p["B"] & p["C"]).to_numpy()
+    y = p["ret_long_10"].to_numpy().copy()
+    y[abc] -= 0.08
+    p["ret_long_10"] = y
+    t = triple_table(p, pair_table(p, 10, signal_info=INFO3), 10, signal_info=INFO3)
+    r = t.iloc[0]
+    assert r.lift > 0.03 and r.q_lift < 0.10 and r.mean_abc > 0 and r.mean_ret_abc < 0
+    assert r.verdict != "synergy"
+
+
+def test_nan_or_negative_mean_ret_never_synergy():
+    t = pd.DataFrame([_row(), _row(mean_ret_ab=-0.001), _row(mean_ret_ab=np.nan)], columns=PAIR_COLS)
+    assert add_pair_verdicts(t, 10)["verdict"].tolist() == ["synergy", "not significant", "not significant"]
+    old = t.drop(columns="mean_ret_ab")            # frames without the column: never synergy
+    assert "synergy" not in add_pair_verdicts(old, 10)["verdict"].tolist()
+
+
+def test_group_stats_mean_ret_matches_pandas():
+    p = synth(plant_a=0.01)
+    ctx = build_context(p, horizon=10, signal_info=INFO)
+    g = group_stats(ctx, ctx.fires["A"], "long")
+    from swingbot.analysis.solo import clip_bounds, clip_values
+    raw = p["ret_long_10"].to_numpy()
+    y = pd.Series(clip_values(raw, clip_bounds(raw)))
+    m = p["A"].to_numpy()
+    assert g.mean_ret == pytest.approx(y[m].groupby(p["date"].to_numpy()[m]).mean().mean())
+    assert g.mean != pytest.approx(g.mean_ret)
+
+
+def test_mean_ret_nan_without_ret_columns_and_equal_for_ret_metric():
+    p = synth(plant_ab=+0.03)
+    t = pair_table(p.drop(columns=[c for c in p.columns if c.startswith("ret_")]), 10, signal_info=INFO)
+    assert t["mean_ret_ab"].isna().all() and (t["verdict"] != "synergy").all()
+    tr = pair_table(p, 10, metric="ret", signal_info=INFO)
+    np.testing.assert_allclose(tr["mean_ret_ab"], tr["mean_ab"])
+
+
+def test_rows_mask_does_not_reclip():
+    p = synth()
+    p["split"] = pd.Categorical(np.where(p.index % 5 == 0, "validation", "discovery"))
+    p.loc[p["split"] == "validation", "excess_long_10"] = 9.0     # must not move discovery bounds
+    m = (p["asset"].isin(["X0", "X1"])).to_numpy()
+    full = build_context(p, horizon=10, signal_info=INFO)
+    sub = build_context(p, horizon=10, signal_info=INFO, rows_mask=m)
+    assert sub.clip == full.clip and sub.ret_clip == full.ret_clip
+    from swingbot.analysis.solo import clip_bounds
+    disc = (p["split"] == "discovery").to_numpy()
+    assert full.clip["long"] == clip_bounds(p["excess_long_10"].to_numpy()[disc])
+    keep = m[disc]
+    np.testing.assert_array_equal(sub.vals["long"], full.vals["long"][keep])
+    np.testing.assert_array_equal(sub.ret_vals["long"], full.ret_vals["long"][keep])
+
+
+def test_pair_regime_mean_ret_uses_split_bounds():
+    p = synth(plant_ab=+0.03); p["trend_regime"] = np.where(p.index % 2 == 0, "up", "down")
+    r = pair_regime_table(p, pair_table(p, 10, signal_info=INFO), 10, signal_info=INFO).set_index("regime")
+    from swingbot.analysis.solo import clip_bounds, clip_values
+    raw = p["ret_long_10"].to_numpy()
+    y = pd.Series(clip_values(raw, clip_bounds(raw)))
+    m = (p["A"] & p["B"] & (p["trend_regime"] == "up")).to_numpy()
+    assert r.loc["up", "mean_ret_ab"] == pytest.approx(y[m].groupby(p["date"].to_numpy()[m]).mean().mean())

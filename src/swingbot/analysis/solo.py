@@ -10,7 +10,7 @@ from swingbot.analysis.stats import (bh_qvalues, date_matched_edge_test, min_dat
 from swingbot.signals import SIGNAL_INFO
 
 METRICS = ("excess", "ret")
-STAT_COLS = ["n_all", "n_solo", "n_dates", "mean_all", "mean_solo", "edge_vs_all_days", "median_all",
+STAT_COLS = ["n_all", "n_solo", "n_dates", "mean_all", "mean_ret", "mean_solo", "edge_vs_all_days", "median_all",
              "hit_rate", "profit_factor", "t", "p", "q", "occ_per_year", "insufficient"]
 
 
@@ -116,8 +116,15 @@ def _span_years(dates: np.ndarray, codes: np.ndarray, n_groups: int) -> np.ndarr
     return out
 
 
+def date_weighted_mean(v: np.ndarray, d: np.ndarray) -> float:
+    """Mean of per-date means of the non-NaN values; NaN when there are none."""
+    ok = ~np.isnan(v)
+    return float(per_date_means(v[ok], d[ok]).mean()) if ok.any() else np.nan
+
+
 def _row_stats(v: np.ndarray, d: np.ndarray, solo: np.ndarray, base_daily: pd.Series,
-               horizon: int) -> dict:
+               horizon: int, r: np.ndarray) -> dict:
+    mean_ret = date_weighted_mean(r, d)
     ok = ~np.isnan(v)
     v, d, solo = v[ok], d[ok], solo[ok]
     n = len(v)
@@ -137,8 +144,16 @@ def _row_stats(v: np.ndarray, d: np.ndarray, solo: np.ndarray, base_daily: pd.Se
     else:
         pf = median = hit = np.nan
     return {"n_all": n, "n_solo": n_solo, "n_dates": int(len(daily)), "mean_all": mean_all,
-            "mean_solo": mean_solo, "edge_vs_all_days": res.mean, "median_all": median,
+            "mean_ret": mean_ret, "mean_solo": mean_solo, "edge_vs_all_days": res.mean, "median_all": median,
             "hit_rate": hit, "profit_factor": pf, "t": res.t, "p": res.p}
+
+
+def clipped_or_nan(raw: np.ndarray | None, n: int) -> np.ndarray:
+    """``raw`` clipped at its own pooled CLIP_PCT bounds; ``n`` NaNs when the column is absent (None)."""
+    if raw is None:
+        return np.full(n, np.nan)
+    raw = np.asarray(raw, dtype="float64")
+    return clip_values(raw, clip_bounds(raw))
 
 
 def solo_table(panel: pd.DataFrame, horizon: int = 10, metric: str = "excess",
@@ -158,6 +173,13 @@ def solo_table(panel: pd.DataFrame, horizon: int = 10, metric: str = "excess",
 
     - ``mean_all``/``mean_solo``: date-weighted means (mean of per-date means,
       equal-weighting dates, not occurrences) of the metric itself.
+    - ``mean_ret``: date-weighted mean of the absolute return net of costs,
+      ``f"ret_{direction}_{horizon}"``, on the signal's rows with a known return,
+      clipped like the metric (pooled CLIP_PCT bounds over the split, per
+      direction). Equals ``mean_all`` when ``metric == "ret"``; NaN when the
+      panel has no ``ret_*`` column. For shorts, ``excess`` is a short-asset /
+      long-benchmark pair trade, so it can be positive while the plain short
+      loses money; ``mean_ret`` shows the latter.
     - ``edge_vs_all_days``: date-matched edge. For each signal date,
       d = mean of the signal's values that date - mean of all non-NaN rows
       (signal or not) that date in the same group/split; the column is the
@@ -200,6 +222,11 @@ def solo_table(panel: pd.DataFrame, horizon: int = 10, metric: str = "excess",
     clip = {d: clip_bounds(raw[d]) for d in directions}
     vals = {d: clip_values(raw[d], clip[d]) for d in directions}
     del raw
+    # absolute return net of costs, clipped the same way (pooled over the split, per direction)
+    rets = {d: vals[d] if metric == "ret" else
+            clipped_or_nan(col(f"ret_{d}_{horizon}") if f"ret_{d}_{horizon}" in panel.columns else None,
+                           len(dates))
+            for d in directions}
     base = {d: _baseline_daily(vals[d], dates, codes, n_groups) for d in directions}
     fam_any = _family_any(panel, info, rows)
 
@@ -208,13 +235,13 @@ def solo_table(panel: pd.DataFrame, horizon: int = 10, metric: str = "excess",
         fires = col(name).astype(bool) & (codes >= 0)
         solo = fires & ~_other_family_any(fam_any, family, len(fires))
         idx = np.flatnonzero(fires)
-        g, v, d, s = codes[idx], vals[direction][idx], dates[idx], solo[idx]
+        g, v, d, s, r = codes[idx], vals[direction][idx], dates[idx], solo[idx], rets[direction][idx]
         order = np.argsort(g, kind="stable")
-        g, v, d, s = g[order], v[order], d[order], s[order]
+        g, v, d, s, r = g[order], v[order], d[order], s[order], r[order]
         bounds = np.searchsorted(g, np.arange(n_groups + 1))
         for k in range(n_groups):
             lo, hi = bounds[k], bounds[k + 1]
-            st = _row_stats(v[lo:hi], d[lo:hi], s[lo:hi], base[direction][k], horizon)
+            st = _row_stats(v[lo:hi], d[lo:hi], s[lo:hi], base[direction][k], horizon, r[lo:hi])
             st["occ_per_year"] = st["n_all"] / span[k] if np.isfinite(span[k]) else np.nan
             st["insufficient"] = (st["n_all"] < min_n) or (st["n_dates"] < min_dates)
             out.append({"signal": name, "family": family, "direction": direction,

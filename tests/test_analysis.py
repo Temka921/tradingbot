@@ -111,7 +111,8 @@ def test_solo_table_columns_and_direction_metric():
     p["excess_short_10"] = np.float32(0.05)
     p["excess_long_10"] = np.float32(-0.05)
     t = solo_table(p, horizon=10, signal_info=INFO)
-    expected = ["signal", "family", "direction", "n_all", "n_solo", "n_dates", "mean_all", "mean_solo",
+    expected = ["signal", "family", "direction", "n_all", "n_solo", "n_dates", "mean_all", "mean_ret",
+                "mean_solo",
                 "edge_vs_all_days", "median_all", "hit_rate", "profit_factor", "t", "p", "q",
                 "occ_per_year", "insufficient"]
     assert list(t.columns) == expected
@@ -431,3 +432,58 @@ def test_universe_views_does_not_filter_on_delisted():
     c["delisted"] = c["asset"] == "B"
     v = universe_views({"crypto": c})
     assert set(v["crypto"]["asset"]) == {"A", "B"} and "delisted" in v["crypto"]
+
+
+# ---------- final review F1: absolute return net of costs (mean_ret) ----------
+
+TINY_INFO = {"L": ("trend", "long"), "S": ("meanrev", "short")}
+
+
+def _tiny_panel():
+    """3 dates x 2 assets. Extremes appear twice, so the pooled 0.1/99.9 clip is a no-op."""
+    dates = pd.to_datetime(["2015-01-02", "2015-01-02", "2015-01-05", "2015-01-05",
+                            "2015-01-06", "2015-01-06"])
+    ret = [0.02, -0.04, 0.02, 0.06, -0.04, 0.06]
+    p = pd.DataFrame({"date": dates, "asset": ["X", "Y"] * 3,
+                      "L": [True, False, True, True, False, False],
+                      "S": [True, True, False, True, True, False]})
+    for side in ("long", "short"):
+        p[f"excess_{side}_10"] = 0.01
+        p[f"ret_{side}_10"] = ret
+    p["split"] = "discovery"
+    return p
+
+
+def test_mean_ret_hand_computation():
+    t = solo_table(_tiny_panel(), horizon=10, signal_info=TINY_INFO).set_index("signal")
+    # S rows: d1 X 0.02, d1 Y -0.04, d2 Y 0.06, d3 X -0.04 -> per-date -0.01, 0.06, -0.04
+    assert t.loc["S", "mean_ret"] == pytest.approx((-0.01 + 0.06 - 0.04) / 3)
+    # L rows: d1 X 0.02, d2 X 0.02, d2 Y 0.06 -> per-date 0.02, 0.04
+    assert t.loc["L", "mean_ret"] == pytest.approx(0.03)
+    assert t.loc["S", "mean_all"] == pytest.approx(0.01)            # the excess metric is unchanged
+
+
+def test_mean_ret_clipped_with_pooled_split_bounds():
+    p = make_panel()
+    t = solo_table(p, horizon=10, signal_info=INFO).set_index("signal")
+    for sig, side in (("A", "long"), ("C", "short")):
+        v = p[f"ret_{side}_10"].to_numpy(dtype="float64")
+        lo, hi = np.percentile(v, (0.1, 99.9))
+        y = pd.Series(np.clip(v, lo, hi))
+        m = p[sig].to_numpy()
+        exp = y[m].groupby(p["date"].to_numpy()[m]).mean().mean()
+        assert t.loc[sig, "mean_ret"] == pytest.approx(exp)
+
+
+def test_mean_ret_equals_mean_all_for_ret_metric():
+    t = solo_table(make_panel(), horizon=10, metric="ret", signal_info=INFO)
+    ok = t["mean_all"].notna()
+    np.testing.assert_allclose(t.loc[ok, "mean_ret"], t.loc[ok, "mean_all"])
+    assert t.loc[~ok, "mean_ret"].isna().all()
+
+
+def test_mean_ret_nan_without_ret_columns():
+    p = make_panel()
+    p = p.drop(columns=[c for c in p.columns if c.startswith("ret_")])
+    t = solo_table(p, horizon=10, signal_info=INFO)
+    assert t["mean_ret"].isna().all() and t["mean_all"].notna().any()

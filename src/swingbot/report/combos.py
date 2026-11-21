@@ -9,35 +9,43 @@ import pandas as pd
 import plotly.graph_objects as go
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
+from swingbot import config
 from swingbot.analysis.pairs import pair_regime_table, pair_table, triple_table
 from swingbot.analysis.redundancy import jaccard_matrix, redundancy_groups
+from swingbot.analysis.stats import min_dates_for_test
 from swingbot.analysis.views import PRIMARY, SUSPECT, universe_views
-from swingbot.report.build import (CAVEAT, CDN_URL, SUSPECT_LABEL, SURVIVORSHIP, _fmt, stock_mean_text)
+from swingbot.report.build import (CAVEAT, CDN_URL, SHORT_NOTE, SUSPECT_LABEL, SURVIVORSHIP, _fmt,
+                                   stock_mean_text)
 from swingbot.signals import SIGNAL_INFO
 
 TOP_PAIRS = 30
 COMBO_CAVEAT = (
     "Combo results are discovery split only. Lift is measured against the better single-only edge: the combined "
     "group's edge minus the larger edge of A-only and B-only (rows where the other signal does not fire). "
-    "q-values correct for multiple testing within each table only, separately for q (edge) and q (lift). "
+    "q-values correct for multiple testing within each table only. The pair table has q (edge) and q (lift); "
+    "the triple table has q (lift) only; the regime table has q (edge) only. "
+    "Each q column is corrected separately. "
     "A synergy here is a hypothesis to be confirmed on the validation split, not a result. "
     "The stock view is suspect: survivorship-biased, so read it as a control, not a finding.")
 PAIR_COLS_SHOWN = [
     ("a", "A"), ("b", "B"), ("direction", "Dir"), ("verdict", "Verdict"), ("n_ab", "n (A&B)"),
-    ("n_dates_ab", "Dates"), ("mean_ab", "Mean excess A&B (bps)"), ("edge_ab", "Edge A&B (bps)"),
+    ("n_dates_ab", "Dates"), ("mean_ab", "Mean excess A&B (bps)"),
+    ("mean_ret_ab", "Mean return A&B, absolute (bps)"), ("edge_ab", "Edge A&B (bps)"),
     ("q_ab", "q edge"), ("edge_a_only", "Edge A only (bps)"), ("edge_b_only", "Edge B only (bps)"),
     ("lift", "Lift (bps)"), ("q_lift", "q lift"), ("jaccard", "Jaccard"),
 ]
 TRIPLE_COLS_SHOWN = [
     ("a", "A"), ("b", "B"), ("c", "C"), ("direction", "Dir"), ("verdict", "Verdict"),
     ("n_abc", "n (A&B&C)"), ("n_dates_abc", "Dates"), ("mean_abc", "Mean excess (bps)"),
+    ("mean_ret_abc", "Mean return, absolute (bps)"),
     ("edge_abc", "Edge (bps)"), ("best_pair", "Best pair"), ("edge_best_pair_only", "Best pair only edge (bps)"),
     ("lift", "Lift (bps)"), ("q_lift", "q lift"),
 ]
 REGIME_COLS_SHOWN = [
     ("a", "A"), ("b", "B"), ("direction", "Dir"), ("regime", "Trend regime"), ("n_ab", "n (A&B)"),
-    ("n_dates_ab", "Dates"), ("mean_ab", "Mean excess (bps)"), ("edge_ab", "Edge (bps)"),
-    ("t_ab", "t"), ("q_ab", "q (BH, this table)"),
+    ("n_dates_ab", "Dates"), ("mean_ab", "Mean excess (bps)"),
+    ("mean_ret_ab", "Mean return, absolute (bps)"), ("edge_ab", "Edge (bps)"),
+    ("t_ab", "t"), ("q_ab", "q edge (BH, this table)"),
 ]
 _TEMPLATES = Path(__file__).parent / "templates"
 
@@ -116,6 +124,8 @@ def build_combo_report(panels: dict[str, pd.DataFrame], out_path: Path, horizon:
     env = Environment(loader=FileSystemLoader(_TEMPLATES), autoescape=select_autoescape(["j2", "html"]))
     page = env.get_template("combos.html.j2").render(
         caveat=CAVEAT, survivorship=SURVIVORSHIP.format(stock_mean=stock_mean), combo_caveat=COMBO_CAVEAT,
+        short_note=SHORT_NOTE, redundant_jaccard=config.REDUNDANT_JACCARD,
+        slice_rows=config.MIN_N_SLICE, slice_dates=max(config.MIN_N_SLICE, min_dates_for_test(horizon)),
         cdn=CDN_URL, horizon=horizon, stamp=stamp, views=views, suspect_label=SUSPECT_LABEL,
         pair_headers=[h for _, h in PAIR_COLS_SHOWN], triple_headers=[h for _, h in TRIPLE_COLS_SHOWN],
         regime_headers=[h for _, h in REGIME_COLS_SHOWN], top_pairs=TOP_PAIRS,

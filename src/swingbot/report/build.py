@@ -21,6 +21,9 @@ CAVEAT = ("Discovery split only. Survivorship bias: single stocks are current in
 CAVEAT_EXTRA = ("p-values test the edge versus the same-day average of all assets in the same view "
                 "(signal included), using date-clustered HAC errors with conservative effective degrees "
                 "of freedom; q-values correct for multiple testing within each table only.")
+SHORT_NOTE = ("For short signals, excess is a short-asset / long-benchmark pair trade (short the asset, long SPY or "
+              "BTC), so it can be positive while the plain short loses money; the absolute mean return shows the "
+              "plain trade. Shorting most altcoins needs futures; funding and borrow costs are not modelled.")
 SUSPECT_LABEL = "Suspect: survivorship-biased (today's index members only)"
 SURVIVORSHIP = (
     "Survivorship is large for single stocks, not a footnote. (a) The stock view is today's S&P 500/400 "
@@ -36,11 +39,12 @@ DUP_NOTE = ("<code>bb_lower_close</code> and <code>zscore_below_2</code> are the
             "count them once.")
 _TEMPLATES = Path(__file__).parent / "templates"
 
-STAT_FIELDS = {"mean_all", "mean_solo", "edge_vs_all_days", "t", "p", "q", "hit_rate", "profit_factor",
+STAT_FIELDS = {"mean_all", "mean_ret", "mean_solo", "edge_vs_all_days", "t", "p", "q", "hit_rate", "profit_factor",
                "occ_per_year"}
 LEADER_COLS = [
     ("signal", "Signal"), ("family", "Family"), ("direction", "Dir"), ("verdict", "Verdict"), ("n_all", "n"),
     ("n_solo", "n solo"), ("n_dates", "Dates"), ("mean_all", "Mean excess (date-weighted, bps)"),
+    ("mean_ret", "Mean return net of costs, absolute (bps)"),
     ("mean_solo", "Mean excess solo (date-weighted, bps)"),
     ("edge_vs_all_days", "Edge vs same-day avg (bps)"), ("t", "t"), ("p", "p"),
     ("q", "q (BH, this table)"), ("hit_rate", "Hit rate"), ("profit_factor", "Profit factor"),
@@ -56,17 +60,24 @@ VERDICTS = ["candidate", "significant negative edge (avoid)",
 def add_verdicts(t: pd.DataFrame) -> pd.DataFrame:
     """Add a ``verdict`` column (after ``direction`` when present).
 
-    candidate: sufficient, q < 0.10, edge > 0 AND mean excess net of costs > 0.
-    Edge and its p/q are relative to the same-day average and cost-neutral, so a
-    significant positive edge alone is not enough.
+    candidate: sufficient, q < 0.10, edge > 0 AND mean excess net of costs > 0
+    AND mean absolute return net of costs (``mean_ret``) > 0. Edge and its p/q
+    are relative to the same-day average and cost-neutral, so a significant
+    positive edge alone is not enough; a short's excess is a pair trade against
+    the benchmark, so positive excess alone is not enough either.
+    "beats same-day avg but loses net of costs": significant positive edge with
+    mean_all <= 0 or mean_ret <= 0. A NaN mean (or a frame without ``mean_ret``)
+    never gives "candidate".
     """
     t = t.drop(columns="verdict", errors="ignore").copy()
     insuf = t["insufficient"].astype(bool).to_numpy()
     q = t["q"].to_numpy(dtype="float64")
     edge = t["edge_vs_all_days"].to_numpy(dtype="float64")
     mean = t["mean_all"].to_numpy(dtype="float64")
+    ret = t["mean_ret"].to_numpy(dtype="float64") if "mean_ret" in t.columns else np.full(len(t), np.nan)
     sig = ~insuf & (q < SIG_Q)
-    v = np.select([insuf, sig & (edge > 0) & (mean > 0), sig & (edge < 0), sig & (edge > 0) & (mean <= 0)],
+    loses = (mean <= 0) | (ret <= 0)                   # NaN compares False
+    v = np.select([insuf, sig & (edge > 0) & (mean > 0) & (ret > 0), sig & (edge < 0), sig & (edge > 0) & loses],
                   [VERDICTS[4], VERDICTS[0], VERDICTS[1], VERDICTS[2]], default=VERDICTS[3])
     pos = t.columns.get_loc("direction") + 1 if "direction" in t.columns else len(t.columns)
     t.insert(pos, "verdict", v)
@@ -95,7 +106,7 @@ def _bps(v) -> str:
 _TEXT_COLS = {"signal", "family", "direction", "verdict", "a", "b", "c", "family_a", "family_b", "regime",
               "best_pair"}
 _INT_COLS = {"n_all", "n_solo", "n_dates", "n_ab", "n_dates_ab", "n_a_only", "n_b_only", "n_abc", "n_dates_abc"}
-_BPS_COLS = {"mean_all", "edge_vs_all_days", "mean_solo", "median_all", "mean_ab", "edge_ab", "edge_a_only",
+_BPS_COLS = {"mean_all", "mean_ret", "mean_ret_ab", "mean_ret_abc", "edge_vs_all_days", "mean_solo", "median_all", "mean_ab", "edge_ab", "edge_a_only",
              "edge_b_only", "lift", "mean_abc", "edge_abc", "edge_best_pair_only", "cond_a_given_b",
              "cond_b_given_a"}
 _P_COLS = {"p", "q", "p_ab", "q_ab", "p_lift", "q_lift"}
@@ -281,7 +292,7 @@ def build_report(panels: dict[str, pd.DataFrame], out_path: Path, horizon: int =
     env = Environment(loader=FileSystemLoader(_TEMPLATES), autoescape=select_autoescape(["j2", "html"]))
     page = env.get_template("report.html.j2").render(
         caveat=CAVEAT, survivorship=SURVIVORSHIP.format(stock_mean=stock_mean), caveat_extra=CAVEAT_EXTRA,
-        cdn=CDN_URL, horizon=horizon, stamp=stamp, coverage=coverage, leaders=leaders,
+        short_note=SHORT_NOTE, cdn=CDN_URL, horizon=horizon, stamp=stamp, coverage=coverage, leaders=leaders,
         suspect_label=SUSPECT_LABEL, dup_note=DUP_NOTE, headers=[h for _, h in LEADER_COLS],
         heat_trend=_heatmap_html(tr_tabs, "trend_regime", "Edge vs same-day avg (bps) by trend regime"),
         heat_vol=_heatmap_html(vol_tabs, "vol_regime", "Edge vs same-day avg (bps) by volatility regime"),

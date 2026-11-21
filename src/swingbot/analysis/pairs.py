@@ -22,18 +22,18 @@ PAIR_VERDICTS = ("insufficient", "synergy", "conflict", "redundant", "not signif
 PAIR_COLS = [
     "a", "b", "family_a", "family_b", "direction", "jaccard",
     "n_ab", "n_dates_ab", "n_a_only", "n_b_only",
-    "mean_ab", "edge_ab", "t_ab", "p_ab", "q_ab",
+    "mean_ab", "mean_ret_ab", "edge_ab", "t_ab", "p_ab", "q_ab",
     "edge_a_only", "edge_b_only", "cond_a_given_b", "cond_b_given_a",
     "lift", "t_lift", "p_lift", "q_lift",
     "insufficient", "verdict",
 ]
 TRIPLE_COLS = [
-    "a", "b", "c", "direction", "n_abc", "n_dates_abc", "mean_abc", "edge_abc",
+    "a", "b", "c", "direction", "n_abc", "n_dates_abc", "mean_abc", "mean_ret_abc", "edge_abc",
     "best_pair", "edge_best_pair_only", "lift", "t_lift", "p_lift", "q_lift",
     "insufficient", "verdict",
 ]
 REGIME_COLS = [
-    "a", "b", "direction", "regime", "n_ab", "n_dates_ab", "mean_ab", "edge_ab",
+    "a", "b", "direction", "regime", "n_ab", "n_dates_ab", "mean_ab", "mean_ret_ab", "edge_ab",
     "t_ab", "p_ab", "q_ab", "insufficient",
 ]
 Q_SIGNIFICANT = 0.10
@@ -49,6 +49,9 @@ class EdgeContext:
     base: dict[str, np.ndarray]            # per-date all-rows mean per direction, by date code
     fires: dict[str, np.ndarray]           # bool per signal over the selected rows
     info: dict[str, tuple[str, str]]
+    ret_vals: dict[str, np.ndarray]        # clipped absolute return net of costs (all NaN if absent)
+    clip: dict[str, tuple[float, float]]   # metric clip bounds per direction (over the split)
+    ret_clip: dict[str, tuple[float, float]]  # ret clip bounds per direction (over the split)
 
 
 @dataclass
@@ -57,6 +60,7 @@ class GroupStats:
     n_dates: int                           # distinct dates among them
     mean: float                            # date-weighted mean of the metric
     edge: TestResult                       # date-matched edge vs ctx.base
+    mean_ret: float = NAN                  # date-weighted mean of the absolute return net of costs
 
 
 def build_context(panel: pd.DataFrame, horizon: int = 10, metric: str = "excess",
@@ -65,10 +69,14 @@ def build_context(panel: pd.DataFrame, horizon: int = 10, metric: str = "excess"
                   rows_mask: np.ndarray | None = None) -> EdgeContext:
     """Arrays shared by every group statistic on the selected rows (split ∩ ``rows_mask``).
 
-    The metric ``f"{metric}_{direction}_{horizon}"`` is clipped at the
-    ``solo.CLIP_PCT`` percentiles pooled over every selected row per direction,
-    exactly as ``solo_table`` does; the baseline is the per-date mean of all
-    non-NaN selected rows of the clipped values.
+    The metric ``f"{metric}_{direction}_{horizon}"`` and the absolute return
+    ``f"ret_{direction}_{horizon}"`` are clipped at the ``solo.CLIP_PCT``
+    percentiles pooled over every row of the **split** per direction, exactly
+    as ``solo_table`` does: the bounds are computed before ``rows_mask`` is
+    applied, so a regime slice uses the same clipped values as the whole split
+    (bounds in ``ctx.clip`` / ``ctx.ret_clip``). The baseline is the per-date
+    mean of all non-NaN selected rows (split ∩ ``rows_mask``) of the clipped
+    metric. ``ret_vals`` is all NaN when the panel has no ``ret_*`` column.
     """
     if metric not in METRICS:
         raise ValueError(f"metric must be one of {METRICS}, got {metric!r}")
@@ -77,11 +85,11 @@ def build_context(panel: pd.DataFrame, horizon: int = 10, metric: str = "excess"
     if missing:
         raise KeyError(f"signal columns missing from panel: {missing}")
 
-    sel = np.ones(len(panel), dtype=bool)
+    in_split = np.ones(len(panel), dtype=bool)
     if split is not None:
-        sel &= (panel["split"] == split).to_numpy(dtype=bool)
-    if rows_mask is not None:
-        sel &= np.asarray(rows_mask, dtype=bool)
+        in_split &= (panel["split"] == split).to_numpy(dtype=bool)
+    split_rows = np.flatnonzero(in_split)
+    sel = in_split if rows_mask is None else in_split & np.asarray(rows_mask, dtype=bool)
     rows = np.flatnonzero(sel)
 
     date_code, uniq = pd.factorize(panel["date"].to_numpy()[rows], sort=True)
@@ -89,11 +97,25 @@ def build_context(panel: pd.DataFrame, horizon: int = 10, metric: str = "excess"
     n_dates_total = len(uniq)
 
     directions = sorted({d for _, d in info.values()})
+
+    def clipped(name: str) -> tuple[np.ndarray, tuple[float, float]]:
+        if name not in panel.columns:
+            return np.full(len(rows), np.nan), (NAN, NAN)
+        full = panel[name].to_numpy(dtype="float64")
+        bounds = clip_bounds(full[split_rows])         # over the split, before rows_mask
+        return clip_values(full[rows], bounds), bounds
+
     vals: dict[str, np.ndarray] = {}
     base: dict[str, np.ndarray] = {}
+    ret_vals: dict[str, np.ndarray] = {}
+    clip: dict[str, tuple[float, float]] = {}
+    ret_clip: dict[str, tuple[float, float]] = {}
     for d in directions:
-        raw = panel[f"{metric}_{d}_{horizon}"].to_numpy(dtype="float64")[rows]
-        v = clip_values(raw, clip_bounds(raw))
+        mcol = f"{metric}_{d}_{horizon}"
+        if mcol not in panel.columns:
+            raise KeyError(f"metric column missing from panel: {mcol}")
+        v, clip[d] = clipped(mcol)
+        ret_vals[d], ret_clip[d] = (v, clip[d]) if metric == "ret" else clipped(f"ret_{d}_{horizon}")
         ok = ~np.isnan(v)
         sums = np.bincount(date_code[ok], weights=v[ok], minlength=n_dates_total)
         cnt = np.bincount(date_code[ok], minlength=n_dates_total)
@@ -101,7 +123,8 @@ def build_context(panel: pd.DataFrame, horizon: int = 10, metric: str = "excess"
             base[d] = np.where(cnt > 0, sums / np.maximum(cnt, 1), np.nan)
         vals[d] = v
     fires = {s: panel[s].to_numpy(dtype=bool)[rows] for s in info}
-    return EdgeContext(int(horizon), date_code, n_dates_total, vals, base, fires, dict(info))
+    return EdgeContext(int(horizon), date_code, n_dates_total, vals, base, fires, dict(info),
+                       ret_vals, clip, ret_clip)
 
 
 def group_stats(ctx: EdgeContext, mask: np.ndarray, direction: str) -> GroupStats:
@@ -109,12 +132,24 @@ def group_stats(ctx: EdgeContext, mask: np.ndarray, direction: str) -> GroupStat
 
     NaN metric values are ignored. Per date, d = mean of the group's values -
     ctx.base; the edge is ``hac_test`` on the date-sorted d series.
+    ``mean_ret`` is the date-weighted mean of ``ctx.ret_vals`` over the rows of
+    ``mask`` with a known return (NaN if none).
     """
+    mask = np.asarray(mask, dtype=bool)
+    r = ctx.ret_vals[direction]
+    rok = mask & ~np.isnan(r)
+    if rok.any():
+        rs = np.bincount(ctx.date_code[rok], weights=r[rok], minlength=ctx.n_dates_total)
+        rc = np.bincount(ctx.date_code[rok], minlength=ctx.n_dates_total)
+        rh = rc > 0
+        mean_ret = float((rs[rh] / rc[rh]).mean())
+    else:
+        mean_ret = NAN
     v = ctx.vals[direction]
-    ok = np.asarray(mask, dtype=bool) & ~np.isnan(v)
+    ok = mask & ~np.isnan(v)
     n = int(ok.sum())
     if n == 0:
-        return GroupStats(0, 0, NAN, TestResult(NAN, NAN, NAN, NAN, 0, 0))
+        return GroupStats(0, 0, NAN, TestResult(NAN, NAN, NAN, NAN, 0, 0), mean_ret)
     dc = ctx.date_code[ok]
     sums = np.bincount(dc, weights=v[ok], minlength=ctx.n_dates_total)
     cnt = np.bincount(dc, minlength=ctx.n_dates_total)
@@ -122,7 +157,7 @@ def group_stats(ctx: EdgeContext, mask: np.ndarray, direction: str) -> GroupStat
     daily = sums[has] / cnt[has]
     d = daily - ctx.base[direction][has]
     edge = hac_test(pd.Series(d), ctx.horizon, n)
-    return GroupStats(n, int(len(has)), float(daily.mean()), edge)
+    return GroupStats(n, int(len(has)), float(daily.mean()), edge, mean_ret)
 
 
 def combo_sufficient(n_ab, n_dates_ab, horizon: int):
@@ -140,15 +175,18 @@ def add_pair_verdicts(t: pd.DataFrame, horizon: int) -> pd.DataFrame:
     - insufficient (but "redundant" when the combo itself is sufficient, see
       ``combo_sufficient``, and an only-group is empty: one signal never fires
       without the other);
-    - synergy: q_lift < 0.10, lift > 0 and mean_ab > 0;
+    - synergy: q_lift < 0.10, lift > 0, mean_ab > 0 and mean_ret_ab > 0 (profitable
+      versus the benchmark and in absolute terms; NaN or a missing
+      ``mean_ret_ab`` column never gives synergy);
     - conflict: q_lift < 0.10 and lift < 0;
     - redundant: not significant (q_lift NaN or >= 0.10) and
       jaccard >= config.REDUNDANT_JACCARD;
-    - not significant otherwise (including q_lift < 0.10 with lift > 0 but mean_ab <= 0).
+    - not significant otherwise (including q_lift < 0.10 with lift > 0 but
+      mean_ab or mean_ret_ab <= 0 or NaN).
 
     Frames without ``jaccard`` / ``n_a_only`` / ``n_b_only`` (triples) are
     accepted: both "redundant" rules then never apply. Triples pass their
-    combo columns as ``n_ab``, ``n_dates_ab`` and ``mean_ab``.
+    combo columns as ``n_ab``, ``n_dates_ab``, ``mean_ab`` and ``mean_ret_ab``.
     """
     t = t.copy()
     q = t["q_lift"].astype("float64")
@@ -160,10 +198,11 @@ def add_pair_verdicts(t: pd.DataFrame, horizon: int) -> pd.DataFrame:
     else:
         only_empty = pd.Series(False, index=t.index)
     jac = t["jaccard"].astype("float64") if "jaccard" in t else pd.Series(NAN, index=t.index)
+    mean_ret = t["mean_ret_ab"].astype("float64") if "mean_ret_ab" in t else pd.Series(NAN, index=t.index)
     conds = [
         insufficient & only_empty & combo_sufficient(t["n_ab"], t["n_dates_ab"], horizon),
         insufficient,
-        sig & (lift > 0) & (t["mean_ab"].astype("float64") > 0),
+        sig & (lift > 0) & (t["mean_ab"].astype("float64") > 0) & (mean_ret > 0),
         sig & (lift < 0),
         ~sig & (jac >= config.REDUNDANT_JACCARD),
     ]
@@ -181,7 +220,9 @@ def pair_table(panel: pd.DataFrame, horizon: int = 10, metric: str = "excess",
     Groups are disjoint: AB = both fire, A-only, B-only. ``edge_*`` are
     date-matched edges vs the same-day all-rows average (as ``solo_table``'s
     ``edge_vs_all_days``); ``mean_ab`` is the date-weighted mean of the metric
-    on AB rows. Counts are rows with a known outcome.
+    on AB rows and ``mean_ret_ab`` that of the absolute return net of costs
+    (``ret_*``, clipped the same way; NaN without ``ret_*`` columns). Counts are
+    rows with a known outcome.
 
     - ``jaccard`` = |A and B| / |A or B| over the split rows (NaN if neither fires);
     - ``cond_a_given_b`` = edge_ab - edge_b_only (what A adds when B fires);
@@ -222,7 +263,8 @@ def pair_table(panel: pd.DataFrame, horizon: int = 10, metric: str = "excess",
                 "a": a, "b": b, "family_a": fam_a, "family_b": fam_b, "direction": dir_a,
                 "jaccard": jac, "n_ab": ab.n, "n_dates_ab": ab.n_dates,
                 "n_a_only": ao.n, "n_b_only": bo.n,
-                "mean_ab": ab.mean, "edge_ab": ab.edge.mean, "t_ab": ab.edge.t, "p_ab": ab.edge.p,
+                "mean_ab": ab.mean, "mean_ret_ab": ab.mean_ret,
+                "edge_ab": ab.edge.mean, "t_ab": ab.edge.t, "p_ab": ab.edge.p,
                 "q_ab": NAN, "edge_a_only": ea, "edge_b_only": eb,
                 "cond_a_given_b": ab.edge.mean - eb, "cond_b_given_a": ab.edge.mean - ea,
                 "lift": lift_t.mean,
@@ -307,7 +349,8 @@ def triple_table(panel: pd.DataFrame, pairs: pd.DataFrame, horizon: int = 10,
         insufficient = not combo_sufficient(abc.n, abc.n_dates, horizon) or np.isnan(e_best)
         out.append({
             "a": a, "b": b, "c": c, "direction": d, "n_abc": abc.n, "n_dates_abc": abc.n_dates,
-            "mean_abc": abc.mean, "edge_abc": abc.edge.mean, "best_pair": best_pair,
+            "mean_abc": abc.mean, "mean_ret_abc": abc.mean_ret, "edge_abc": abc.edge.mean,
+            "best_pair": best_pair,
             "edge_best_pair_only": e_best, "lift": lift_t.mean, "t_lift": lift_t.t,
             "p_lift": lift_t.p, "q_lift": NAN, "insufficient": bool(insufficient), "verdict": "",
         })
@@ -317,7 +360,8 @@ def triple_table(panel: pd.DataFrame, pairs: pd.DataFrame, horizon: int = 10,
         t[col] = t[col].astype(np.int64)
     t["insufficient"] = t["insufficient"].astype(bool)
     v = add_pair_verdicts(t.rename(columns={"n_abc": "n_ab", "n_dates_abc": "n_dates_ab",
-                                            "mean_abc": "mean_ab"}), horizon)
+                                            "mean_abc": "mean_ab", "mean_ret_abc": "mean_ret_ab"}),
+                         horizon)
     t["verdict"] = v["verdict"].to_numpy()
     return t[TRIPLE_COLS]
 
@@ -329,7 +373,8 @@ def pair_regime_table(panel: pd.DataFrame, pairs: pd.DataFrame, horizon: int = 1
     """Edge of every synergy pair's AB group inside each regime of ``regime_col``.
 
     Each regime gets its own context (``rows_mask = regime == value``), so the
-    baseline is the same-day average of rows in the same regime. Regime
+    baseline is the same-day average of rows in the same regime; clip bounds
+    stay those of the whole split (no re-clipping per regime). Regime
     "unknown" (and missing labels) are skipped; regimes are listed in sorted
     order. ``q_ab`` is BH across this table. ``insufficient``: n_ab < MIN_N_SLICE
     or n_dates_ab < max(MIN_N_SLICE, 5*horizon).
@@ -350,7 +395,8 @@ def pair_regime_table(panel: pd.DataFrame, pairs: pd.DataFrame, horizon: int = 1
             g = group_stats(ctx, ctx.fires[a] & ctx.fires[b], d)
             out.append({
                 "a": a, "b": b, "direction": d, "regime": reg, "n_ab": g.n,
-                "n_dates_ab": g.n_dates, "mean_ab": g.mean, "edge_ab": g.edge.mean,
+                "n_dates_ab": g.n_dates, "mean_ab": g.mean, "mean_ret_ab": g.mean_ret,
+                "edge_ab": g.edge.mean,
                 "t_ab": g.edge.t, "p_ab": g.edge.p, "q_ab": NAN,
                 "insufficient": bool(g.n < config.MIN_N_SLICE or g.n_dates < min_dates),
             })

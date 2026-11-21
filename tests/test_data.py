@@ -390,7 +390,7 @@ def test_crypto_universe_n_and_cache(monkeypatch, tmp_path):
 
 def test_committed_crypto_cache_is_clean():
     cache = universe._read_cache(Path(__file__).resolve().parents[1] / "universe" / "crypto.csv")
-    assert len(cache) == 60 and cache[0].symbol == "BTCUSDT"
+    assert len(cache) >= 400 and [a.symbol for a in cache[:2]] == ["BTCUSDT", "ETHUSDT"]
     listed = {a.symbol[:-4] for a in cache}
     for a in cache:
         assert a.symbol.endswith("USDT")

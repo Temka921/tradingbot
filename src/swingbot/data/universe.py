@@ -102,14 +102,18 @@ def _write_cache(path: Path, assets: list[AssetMeta]) -> None:
 
 
 def stock_universe() -> list[AssetMeta]:
+    """Non-ETF stock rows (cached in stocks.csv) followed by every row of etfs.csv.
+    ETFs come only from etfs.csv; the stocks.csv cache never holds ETFs."""
     cache = UNIVERSE_DIR / "stocks.csv"
     if cache.exists():
-        return _read_cache(cache)
-    assets = _from_wiki(SP500_URL, "large") + _from_wiki(SP400_URL, "mid") + _etfs()
+        stocks = [a for a in _read_cache(cache) if not a.is_etf]
+    else:
+        stocks = _from_wiki(SP500_URL, "large") + _from_wiki(SP400_URL, "mid")
+        seen_w: set[str] = set()
+        stocks = [a for a in stocks if not (a.symbol in seen_w or seen_w.add(a.symbol))]
+        _write_cache(cache, stocks)
     seen: set[str] = set()
-    uniq = [a for a in assets if not (a.symbol in seen or seen.add(a.symbol))]
-    _write_cache(cache, uniq)
-    return uniq
+    return [a for a in stocks + _etfs() if not (a.symbol in seen or seen.add(a.symbol))]
 
 
 def crypto_universe(n: int = 60) -> list[AssetMeta]:

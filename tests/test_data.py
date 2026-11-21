@@ -309,3 +309,26 @@ def test_stock_universe_wikipedia_parse(monkeypatch, tmp_path):
     # cache written and reused with no network
     monkeypatch.setattr(universe.requests, "get", lambda *a, **k: pytest.fail("network"))
     assert universe.stock_universe() == out
+
+
+def test_stock_universe_etfs_only_from_etfs_csv(monkeypatch, tmp_path):
+    monkeypatch.setattr(universe, "UNIVERSE_DIR", tmp_path)
+    pd.DataFrame([("AAA", "stock", "Tech", "large", False, False),
+                  ("SPY", "stock", "broad", "etf", True, False)],   # stale ETF row in the cache
+                 columns=["symbol", "market", "sector", "cap_bucket", "is_etf", "is_major"]
+                 ).to_csv(tmp_path / "stocks.csv", index=False)
+    pd.DataFrame({"symbol": ["SPY", "TLT"], "sector": ["us_equity", "bonds"]}).to_csv(tmp_path / "etfs.csv", index=False)
+    out = universe.stock_universe()
+    syms = [a.symbol for a in out]
+    assert syms == ["AAA", "SPY", "TLT"]
+    tlt = out[2]
+    assert tlt.is_etf and tlt.cap_bucket == "etf" and tlt.sector == "bonds"
+
+
+def test_committed_etf_list():
+    df = pd.read_csv(universe.UNIVERSE_DIR / "etfs.csv")
+    assert 95 <= len(df) <= 110 and df["symbol"].is_unique and "SPY" in set(df["symbol"])
+    assert set(df["sector"]) == {"us_equity", "factor", "us_sector", "international", "bonds",
+                                 "commodity", "currency", "realestate"}
+    stocks = pd.read_csv(universe.UNIVERSE_DIR / "stocks.csv")
+    assert not stocks["is_etf"].any() and not set(stocks["symbol"]) & set(df["symbol"])

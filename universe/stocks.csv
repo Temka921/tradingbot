@@ -902,23 +902,3 @@ XPO,stock,Industrials,mid,False,False
 XRAY,stock,Health Care,mid,False,False
 YETI,stock,Consumer Discretionary,mid,False,False
 ZION,stock,Financials,mid,False,False
-SPY,stock,broad,etf,True,False
-QQQ,stock,broad,etf,True,False
-IWM,stock,broad,etf,True,False
-DIA,stock,broad,etf,True,False
-XLK,stock,tech,etf,True,False
-XLF,stock,financials,etf,True,False
-XLE,stock,energy,etf,True,False
-XLV,stock,health,etf,True,False
-XLI,stock,industrials,etf,True,False
-XLY,stock,discretionary,etf,True,False
-XLP,stock,staples,etf,True,False
-XLU,stock,utilities,etf,True,False
-XLB,stock,materials,etf,True,False
-XLRE,stock,realestate,etf,True,False
-XLC,stock,communication,etf,True,False
-GLD,stock,gold,etf,True,False
-TLT,stock,bonds,etf,True,False
-HYG,stock,bonds,etf,True,False
-EEM,stock,international,etf,True,False
-EFA,stock,international,etf,True,False

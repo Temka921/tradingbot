@@ -81,15 +81,15 @@ def test_europe_universe_parse(dirs, monkeypatch):
            "<tr><td>LVMH</td><td>MC</td></tr>"
            "<tr><td>Shared Co.</td><td>SHC</td></tr></table>")
     ftse = ("<table><tr><th>Company</th><th>EPIC</th></tr>"
-            "<tr><td>BT Group</td><td>BT.A</td></tr><tr><td>Shell</td><td>SHEL</td></tr></table>")
+            "<tr><td>BT Group</td><td>BT.A</td></tr><tr><td>Shell</td><td>SHEL</td></tr><tr><td>BP plc</td><td>BP.</td></tr></table>")
 
     def get(url, **k):
         return R(dax if "DAX" in url else cac if "CAC" in url else ftse)
 
     monkeypatch.setattr(foreign.requests, "get", get)
     out = foreign.europe_universe()
-    assert out["symbol"].tolist() == ["SIE.DE", "SAP.DE", "SHD.DE", "MC.PA", "BT-A.L", "SHEL.L"]
-    assert out["home_index"].tolist() == ["^GDAXI"] * 3 + ["^FCHI", "^FTSE", "^FTSE"]
+    assert out["symbol"].tolist() == ["SIE.DE", "SAP.DE", "SHD.DE", "MC.PA", "BT-A.L", "SHEL.L", "BP.L"]
+    assert out["home_index"].tolist() == ["^GDAXI"] * 3 + ["^FCHI", "^FTSE", "^FTSE", "^FTSE"]
     assert set(out["market"]) == {"europe"}
     assert (universe.UNIVERSE_DIR / "europe.csv").exists()
 
@@ -110,6 +110,14 @@ def test_glitch_filter():
     assert out["high"].iloc[3] == pytest.approx(101.0) and out["low"].iloc[3] == pytest.approx(99.0)
     assert out["close"].iloc[6] == 170.0 and out["close"].iloc[9] == 170.0
     assert out.notna().all().all()
+
+
+def test_glitch_filter_two_day_spike():
+    close = [100.0, 100.0, 300.0, 300.0, 100.0, 100.0, 100.0]
+    df = _bars("2020-01-01", "2020-01-09").iloc[:7].copy()
+    df["close"] = close
+    out = foreign.glitch_filter(df)
+    assert out["close"].tolist() == [100.0] * 7
 
 
 def test_fetch_fng(monkeypatch):

@@ -62,7 +62,7 @@ def _suffix(code: str, suffix: str) -> str:
     if code.endswith(suffix):
         code = code[: -len(suffix)]
     if suffix == ".L":
-        code = code.replace(".", "-")
+        code = code.rstrip(".").replace(".", "-")
     return code + suffix
 
 
@@ -122,11 +122,7 @@ def download_market(market: str) -> list[str]:
     return msgs
 
 
-def glitch_filter(df: pd.DataFrame) -> pd.DataFrame:
-    """Remove one-day data glitches: |close/prev - 1| > 0.60 and a reversal of more than half
-    the move within the next 2 bars. Glitch OHLC values become NaN, then are forward-filled."""
-    out = df.copy()
-    close = df["close"].to_numpy(dtype=float)
+def _glitch_rows(close) -> list[int]:
     bad = []
     for i in range(1, len(close)):
         prev = close[i - 1]
@@ -140,10 +136,21 @@ def glitch_filter(df: pd.DataFrame) -> pd.DataFrame:
             if i + k < len(close) and (close[i] - close[i + k]) * sign > 0.5 * abs(move):
                 bad.append(i)
                 break
-    if bad:
-        cols = [c for c in ("open", "high", "low", "close") if c in out.columns]
-        out.iloc[bad, [out.columns.get_loc(c) for c in cols]] = float("nan")
-        out[cols] = out[cols].ffill()
+    return bad
+
+
+def glitch_filter(df: pd.DataFrame) -> pd.DataFrame:
+    """Remove data glitches: |close/prev - 1| > 0.60 and a reversal of more than half the move
+    within the next 2 bars. Glitch OHLC values are replaced by the previous (cleaned) bar's values;
+    detection repeats (max 3 passes) so multi-day spikes are fully cleaned. Returns a copy."""
+    out = df.copy()
+    cols = [out.columns.get_loc(c) for c in ("open", "high", "low", "close") if c in out.columns]
+    for _ in range(3):
+        bad = _glitch_rows(out["close"].to_numpy(dtype=float))
+        if not bad:
+            break
+        for i in bad:  # ascending, so a run of glitches propagates the last good bar
+            out.iloc[i, cols] = out.iloc[i - 1, cols].to_numpy()
     return out
 
 

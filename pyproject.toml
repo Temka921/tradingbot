@@ -9,6 +9,7 @@ requires-python = ">=3.10"
 dependencies = [
     "pandas", "numpy", "pyarrow", "yfinance", "requests",
     "scipy", "statsmodels", "plotly", "jinja2", "lxml",
+    "lightgbm", "shap",
 ]
 
 [project.optional-dependencies]

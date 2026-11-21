@@ -26,5 +26,14 @@ REDUNDANT_JACCARD = 0.5      # pair verdict "redundant": not significant and Jac
 MAX_TRIPLES = 500            # triple_table evaluates at most this many candidate triples
 BENCHMARK: dict[str, str] = {"stock": "SPY", "crypto": "BTCUSDT"}
 
+# Phase 5 ML attribution: fixed hyperparameters, no tuning.
+ML_PARAMS: dict = {"objective": "regression", "num_leaves": 15, "learning_rate": 0.05,
+                   "n_estimators": 200, "min_child_samples": 500, "subsample": 0.8,
+                   "subsample_freq": 1, "colsample_bytree": 0.8, "reg_lambda": 1.0,
+                   "random_state": 0, "verbose": -1}
+ML_MAX_TRAIN_ROWS = 1_500_000  # random row sample (seed 0) per fit when larger
+SHAP_ROWS = 50_000             # random sample (seed 0) for SHAP values
+SHAP_INTERACTION_ROWS = 3_000  # random sample (seed 0) for SHAP interaction values
+
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR: Path = Path(os.environ.get("SWINGBOT_DATA", _REPO_ROOT / "data"))

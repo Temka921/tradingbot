@@ -183,7 +183,14 @@ Write the `...` body: two zips built with `zipfile.ZipFile(io.BytesIO(), "w")`. 
     - `mfe_h`/`mae_h` stay NaN.
 
     With `delisted=False`, output is unchanged.
-  - `config.DELIST_GAP_DAYS = 7`.
+  - `config.DELIST_GAP_DAYS = 7`, `config.RELIST_GAP_DAYS = 5`.
+  - **Relisted symbols are different assets.** Binance reuses tickers: `LUNAUSDT` is Terra LUNA until 2022-05-13 (crashed to 0.00005), then a new coin from 2022-05-31 (~$5). Both the API and the archive return the two as one series. Add `panel.split_relistings(symbol: str, df: pd.DataFrame, max_gap_days: int = config.RELIST_GAP_DAYS) -> list[tuple[str, pd.DataFrame]]`:
+    - split at every gap between consecutive dates that is longer than `max_gap_days`;
+    - return the segments in time order;
+    - the last segment keeps `symbol`; earlier segments are named `f"{symbol}@{segment_first_date:%Y-%m-%d}"`;
+    - no gap returns `[(symbol, df)]`.
+
+    `build_panel` applies it to crypto only, right after loading. Each segment is its own asset: same meta row, its own signals and outcomes, and its own `delisted` flag, so the dead first LUNA segment is delisted and exits at its last close. The benchmark is looked up by the last segment's name. Never split stocks: holidays make multi-day gaps normal.
   - Panel: an asset is delisted when its last date (after the holdout cut) is earlier than `market_last - DELIST_GAP_DAYS` days, where `market_last` = the latest last date over all loaded assets of that market. The panel gets a bool column `delisted` (per asset, constant), and `compute_outcomes` is called with it.
 
 - [ ] **Step 1: Write the failing tests**
@@ -216,7 +223,24 @@ def test_panel_marks_delisted(capsys):
     assert out.groupby("asset")["delisted"].first().to_dict() == {"BTCUSDT": False, "LUNAUSDT": True}
     last = out[out.asset == "LUNAUSDT"].iloc[-3]
     assert not np.isnan(last["gross_10"])               # exits at the last close instead of NaN
+
+def test_split_relistings():
+    d1 = pd.date_range("2021-01-01", periods=30, freq="D")
+    d2 = pd.date_range(d1[-1] + pd.Timedelta(days=18), periods=20, freq="D")
+    df = bars_from_closes([1.0] * 50); df.index = pd.DatetimeIndex(list(d1) + list(d2), name="date")
+    segs = panel.split_relistings("LUNAUSDT", df)
+    assert [s for s, _ in segs] == ["LUNAUSDT@2021-01-01", "LUNAUSDT"]
+    assert [len(x) for _, x in segs] == [30, 20]
+    assert panel.split_relistings("BTCUSDT", df.iloc[:30])[0][0] == "BTCUSDT"
+
+def test_panel_relisted_symbol_becomes_two_assets(capsys):
+    # BTCUSDT continuous; LUNAUSDT with an 18-day gap -> two assets, the first delisted
+    ...
+    d = out.groupby("asset")["delisted"].first().to_dict()
+    assert d["LUNAUSDT@2020-01-01"] is True and d["LUNAUSDT"] is False
 ```
+
+The relisting tests sit in `tests/test_regimes_panel.py` (`bars_from_closes`: import it or copy a minimal version there).
 
 Use the `bars_from_closes` helper in `tests/test_outcomes.py`, or add one there (open = close = given, high/low ±1%).
 

@@ -225,6 +225,37 @@ plotly (report charts), jinja2, pytest. Indicators hand-written.
 - Report styling.
 - Performance tuning (vectorization, caching).
 
+## Decisions after Phase 1 (2026-11-21)
+
+Phase 1 found that the stock "candidates" are likely survivorship artefacts
+(today's index members only; universe drift +33.9 bps/10d; the ETF control shows
+nothing). The user chose **option C**:
+
+- **ETFs and crypto are the primary results; single stocks are reported but
+  labelled "suspect (survivorship-biased)"** in every report. No paid
+  point-in-time stock data for now.
+- **ETF universe expanded to ~100** liquid ETFs with long histories (US equity,
+  factors, sectors/industries, international, bonds, commodities, currencies,
+  real estate). ETF segment = asset class. ETFs are analysed as their own view
+  (`etf`), with their own same-day baseline; SPY stays the benchmark.
+- **Crypto includes delisted coins.** Universe = every Binance USDT spot pair ever
+  listed (from the `data.binance.vision` archive plus the live API), minus
+  stablecoins, fiat, wrapped/commodity tokens, tokenized equities and leveraged
+  tokens. Survivorship is controlled point-in-time:
+  - an asset-day is **eligible** only if the asset ranks in the top 100 by
+    trailing 30-day median dollar volume (close × volume) at the close of t;
+  - a coin whose data ends more than 7 days before the market's last date is
+    **delisted**: forward outcomes that run past its last bar exit at its last close.
+- **Holdout rule:** the one-time 2024+ run happens automatically at the end of
+  Phase 6, only on finalists that passed validation. If none pass, the holdout
+  stays locked.
+
+Phase 4 choices: pairs and triples are only formed from signals with the same
+direction (a long and a short signal together is not a trade). Pair lift is
+tested as the combo's same-day edge minus the better single-only edge, with a
+conservative two-sample HAC test; a combo counts as **synergy** only if that lift
+is significant (q < 0.10), positive, and the combo is profitable net of costs.
+
 ## Calls Claude made (user may override)
 
 - Daily bars only, fixed method defaults, long + short signals both evaluated

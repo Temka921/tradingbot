@@ -271,7 +271,8 @@ def test_shap_interaction_finds_planted_pair(small_shap):
     p.loc[p["A"] & p["B"], "excess_long_10"] += 0.04
     model, X = _fit(p, info)
     t = shap_pair_interactions(model, X, signal_info=info)
-    assert list(t.columns) == ["a", "b", "mean_abs_interaction", "mean_interaction_when_both", "n_both"]
+    assert list(t.columns) == ["a", "b", "mean_abs_interaction", "mean_interaction_when_both", "n_both",
+                              "insufficient"]
     assert (t.a.iloc[0], t.b.iloc[0]) == ("A", "B") and t.mean_interaction_when_both.iloc[0] > 0
     assert not t[["a", "b"]].isin(["S"]).any().any()                 # opposite direction excluded
     assert t["mean_abs_interaction"].is_monotonic_decreasing
@@ -289,3 +290,35 @@ def test_never_firing_signal_no_crash(small_shap):
     t = shap_pair_interactions(model, X, signal_info=info)
     zr = t[(t.a == "Z") | (t.b == "Z")]
     assert (zr.n_both == 0).all() and zr.mean_interaction_when_both.isna().all()
+
+
+# ---- Phase 5 final-fix wave ----
+def test_pair_interactions_flag_tiny_n_both(small_shap):
+    info = {**INFO, "C": ("trend", "long")}
+    p = synth_ml(300, 30)
+    p["C"] = False
+    p.loc[p.index[:10], "C"] = True
+    model, X = _fit(p, info)
+    t = shap_pair_interactions(model, X, signal_info=info)
+    assert list(t.columns)[-1] == "insufficient" and t["insufficient"].dtype == bool
+    assert (t["insufficient"] == (t["n_both"] < config.MIN_N_SLICE)).all()
+    assert t[(t.a == "C") | (t.b == "C")]["insufficient"].all()
+    assert not t[(t.a == "A") & (t.b == "B")]["insufficient"].iloc[0]
+
+
+def test_shap_kind_marks_date_constant_regime(small_shap):
+    p = synth_ml(300, 30)
+    p["market_regime"] = pd.Categorical(np.where(p["date"].dt.month % 2 == 0, "bull", "bear"))
+    model, X = _fit(p, INFO)
+    s = shap_summary(model, X, signal_info=INFO)
+    kinds = dict(zip(s.feature, s.kind))
+    assert kinds["market_regime=bull"] == "regime (date-constant)"
+    assert kinds["trend_regime=up"] == "regime" and kinds["A"] == "signal"
+
+
+def test_nan_target_mask_unchanged():
+    p = synth_ml()
+    p.loc[p.index[::7], "excess_long_10"] = np.nan
+    out = walk_forward(p, horizon=10, signal_info=INFO)
+    assert not out["target"].isna().any() and set(out["fold"]) == {2013, 2014, 2015}
+    assert out.attrs["train_only_years"] == [2010, 2011, 2012]

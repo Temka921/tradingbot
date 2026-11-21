@@ -62,3 +62,53 @@ def test_attribute_script(tmp_path, monkeypatch, capsys):
     assert "SKIP stock" in out
     rep = list((tmp_path / "reports").glob("ml_report_*.html"))
     assert rep and rep[0].name in out
+
+
+# ---- Phase 5 final-fix wave ----
+from swingbot.report import ml as mlmod  # noqa: E402
+
+
+def test_inter_rows_blank_and_grey_insufficient():
+    t = pd.DataFrame({"a": ["x", "y"], "b": ["z", "w"], "mean_abs_interaction": [1e-4, 2e-4],
+                      "mean_interaction_when_both": [3e-4, 4e-4], "n_both": [5, 80],
+                      "phase4_verdict": ["", ""], "phase4_lift": [np.nan, np.nan],
+                      "insufficient": [True, False]})
+    rows = mlmod._rows(t, mlmod.INTER_SHOWN, blank_cols={"mean_interaction_when_both"})
+    i = [c for c, _ in mlmod.INTER_SHOWN].index("mean_interaction_when_both")
+    assert rows[0]["insufficient"] and rows[0]["cells"][i] == ""
+    assert not rows[1]["insufficient"] and rows[1]["cells"][i] == "4.0"
+
+
+def test_report_notes(tmp_path, monkeypatch):
+    _fast(monkeypatch)
+    out = build_ml_report(_panels(), tmp_path / "r.html", horizon=10, as_of="x")
+    html = __import__("html").unescape(out.read_text(encoding="utf-8"))
+    assert f"random sample of {config.SHAP_INTERACTION_ROWS} rows" in html
+    assert "n/a bps" not in html
+    assert "winner's curse" in html and "not directly comparable" in html
+    assert "best of" in html and "signals" in html
+    assert "Only one walk-forward fold (2013); the 'all' row equals it." in html
+    assert "were used for training only (min_train_years=3)" in html
+    assert "2010, 2011, 2012" in html
+    assert "Date-constant features" in html
+    assert "can rank high in SHAP" in html and "in-sample attribution" in html
+    assert "survivorship bias inflates" in html
+    assert 'class="insuf"' in html
+
+
+def test_validation_warning_logic():
+    def df(sp, p):
+        return pd.DataFrame({"fold": ["all", "validation"], "spread_mean": sp, "spread_p": p})
+    assert mlmod._validation_warning(df([0.001, -0.001], [0.5, 0.5]))
+    assert mlmod._validation_warning(df([0.001, 0.001], [0.01, 0.5]))
+    assert not mlmod._validation_warning(df([0.001, 0.002], [0.01, 0.05]))
+    assert not mlmod._validation_warning(df([0.001, 0.002], [0.5, 0.5]))
+    assert not mlmod._validation_warning(df([0.001, np.nan], [0.01, np.nan]))
+    assert not mlmod._validation_warning(df([0.001, 0.001], [0.01, 0.5]).iloc[:1])
+
+
+def test_validation_warning_rendered(tmp_path, monkeypatch):
+    _fast(monkeypatch)
+    monkeypatch.setattr(mlmod, "_validation_warning", lambda oos: True)
+    html = build_ml_report(_panels(), tmp_path / "r.html", horizon=10, as_of="x").read_text(encoding="utf-8")
+    assert "Validation does not confirm the walk-forward result." in html

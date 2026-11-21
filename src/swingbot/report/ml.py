@@ -11,7 +11,7 @@ import plotly.graph_objects as go
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from swingbot import config
-from swingbot.analysis.attribution import (OOS_COLS, feature_matrix, fit_discovery_score_validation, oos_metrics,
+from swingbot.analysis.attribution import (feature_matrix, fit_discovery_score_validation, oos_metrics,
                                            shap_pair_interactions, shap_summary, walk_forward)
 from swingbot.analysis.pairs import pair_table
 from swingbot.analysis.solo import solo_table
@@ -25,6 +25,10 @@ ML_CAVEAT = (
     "Hyperparameters are fixed (config.ML_PARAMS) and not tuned. "
     "Interaction magnitudes are the raw off-diagonal SHAP interaction values, which are half of the full "
     "pairwise effect. SHAP is computed on a random row sample. "
+    "SHAP is computed on the discovery rows the model was trained on, so it is in-sample attribution. "
+    "Date-constant features (market_regime=*, identical for every asset on a date) can rank high in SHAP "
+    "because they time the average return across dates, but every out-of-sample metric here is within-date "
+    "(cross-sectional), so they cannot help selection. "
     "The stock view is suspect: survivorship-biased, so read it as a control, not a finding.")
 OOS_SHOWN = [("fold", "Fold"), ("n", "n"), ("n_dates", "Dates"), ("ic_mean", "Rank IC"), ("ic_t", "IC t"),
              ("ic_p", "IC p"), ("spread_mean", "Top-decile spread (bps)"), ("spread_t", "Spread t"),
@@ -41,6 +45,11 @@ _BPS = {"spread_mean", "top_mean", "mean_abs_shap", "mean_shap_when_on", "mean_a
         "mean_interaction_when_both", "phase4_lift"}
 _INT = {"n", "n_dates", "top_ret_n", "n_on", "n_both", "rank"}
 _P3 = {"ic_p", "spread_p"}
+STOCK_NOTE = ("The stock model leans on dip/down features (trend_regime=down, oversold signals), which is the "
+              "pattern survivorship bias inflates; read it as an artefact, not skill.")
+COMPARE_NOTE = ("The solo figure is the in-sample discovery same-day edge of the best of {n} signals (winner's "
+                "curse), while the ML figure is an out-of-sample top-decile spread, so the two are different "
+                "metrics and not directly comparable.")
 _TEMPLATES = Path(__file__).parent / "templates"
 
 
@@ -62,10 +71,29 @@ def _cell(col: str, v) -> str:
     return f"{v:.2f}"
 
 
-def _rows(t: pd.DataFrame, cols: list[tuple[str, str]]) -> list[dict]:
+def _rows(t: pd.DataFrame, cols: list[tuple[str, str]], blank_cols: set[str] | None = None) -> list[dict]:
+    """Table rows; on insufficient rows the ``blank_cols`` cells are blanked."""
     flag = "insufficient" in t.columns
-    return [{"insufficient": bool(r["insufficient"]) if flag else False,
-             "cells": [_cell(c, r[c]) for c, _ in cols]} for r in t.to_dict("records")]
+    out = []
+    for r in t.to_dict("records"):
+        insuf = bool(r["insufficient"]) if flag else False
+        out.append({"insufficient": insuf,
+                    "cells": ["" if insuf and blank_cols and c in blank_cols else _cell(c, r[c])
+                              for c, _ in cols]})
+    return out
+
+
+def _validation_warning(oos: pd.DataFrame) -> bool:
+    """True when the validation spread contradicts the walk-forward "all" spread (sign flip, or p 0.10 cliff)."""
+    f = oos["fold"].astype(str)
+    a, v = oos[f == "all"], oos[f == "validation"]
+    if a.empty or v.empty:
+        return False
+    sa, sv = float(a["spread_mean"].iloc[0]), float(v["spread_mean"].iloc[0])
+    pa, pv = float(a["spread_p"].iloc[0]), float(v["spread_p"].iloc[0])
+    if np.isnan(sa) or np.isnan(sv):
+        return False
+    return bool(sa * sv < 0 or (pa < 0.10 and pv >= 0.10))
 
 
 def _shap_chart(shap: pd.DataFrame, view: str, top: int = 20) -> str:
@@ -76,13 +104,14 @@ def _shap_chart(shap: pd.DataFrame, view: str, top: int = 20) -> str:
     return fig.to_html(full_html=False, include_plotlyjs=False, config={"responsive": True})
 
 
-def _best_solo(panel: pd.DataFrame, horizon: int) -> dict | None:
+def _best_solo(panel: pd.DataFrame, horizon: int) -> tuple[dict | None, int]:
+    """Best solo candidate (or None) and the number of signals in the solo table."""
     t = add_verdicts(solo_table(panel, horizon=horizon))
     c = t[t["verdict"] == "candidate"].sort_values("edge_vs_all_days", ascending=False, kind="stable")
     if c.empty:
-        return None
+        return None, len(t)
     r = c.iloc[0]
-    return {"signal": str(r["signal"]), "edge_bps": _bps(r["edge_vs_all_days"])}
+    return {"signal": str(r["signal"]), "edge_bps": _bps(r["edge_vs_all_days"])}, len(t)
 
 
 def _skip_text(skipped: list[tuple]) -> list[str]:
@@ -114,7 +143,10 @@ def build_ml_report(panels: dict[str, pd.DataFrame], out_path: Path, horizon: in
         save("oos", view, oos_all)
         all_row = oos_all[oos_all["fold"].astype(str) == "all"]
         ml_spread = _bps(all_row["spread_mean"].iloc[0]) if len(all_row) else ""
-        best = _best_solo(panel, horizon)
+        best, n_signals = _best_solo(panel, horizon)
+        folds = [f for f in oos_all["fold"].astype(str) if f not in ("all", "validation")]
+        train_only = list(wf.attrs.get("train_only_years", []))
+        one_fold = (folds[0], ", ".join(map(str, train_only))) if len(folds) == 1 else None
 
         shap = inter = None
         if model is not None:
@@ -134,9 +166,11 @@ def build_ml_report(panels: dict[str, pd.DataFrame], out_path: Path, horizon: in
             "oos_rows": _rows(oos_all[oos_all["fold"].astype(str) != "validation"], OOS_SHOWN),
             "val_rows": _rows(val_rows, OOS_SHOWN), "skipped": _skip_text(skipped),
             "skipped_val": _skip_text(skipped_val), "ml_spread": ml_spread, "best": best,
+            "n_signals": n_signals, "one_fold": one_fold, "val_warning": _validation_warning(oos_all),
             "shap_chart": _shap_chart(shap, view) if shap is not None and len(shap) else "",
             "shap_rows": _rows(shap, SHAP_SHOWN) if shap is not None else [],
-            "inter_rows": _rows(inter, INTER_SHOWN) if inter is not None else [],
+            "inter_rows": (_rows(inter, INTER_SHOWN, blank_cols={"mean_interaction_when_both"})
+                           if inter is not None else []),
             "has_model": model is not None,
         })
         del panel, wf, oos, oos_all, val_pred, model, shap, inter
@@ -145,7 +179,8 @@ def build_ml_report(panels: dict[str, pd.DataFrame], out_path: Path, horizon: in
     env = Environment(loader=FileSystemLoader(_TEMPLATES), autoescape=select_autoescape(["j2", "html"]))
     page = env.get_template("ml.html.j2").render(
         survivorship=SURVIVORSHIP.format(stock_mean=stock_mean), ml_caveat=ML_CAVEAT, short_note=SHORT_NOTE,
-        cdn=CDN_URL, horizon=horizon, stamp=stamp, views=views, suspect_label=SUSPECT_LABEL,
+        cdn=CDN_URL, horizon=horizon, stamp=stamp, views=views, compare_note=COMPARE_NOTE, stock_note=STOCK_NOTE, inter_rows_n=config.SHAP_INTERACTION_ROWS,
+        suspect_label=SUSPECT_LABEL,
         oos_headers=[h for _, h in OOS_SHOWN], shap_headers=[h for _, h in SHAP_SHOWN],
         inter_headers=[h for _, h in INTER_SHOWN])
     out_path.write_text(page, encoding="utf-8")

@@ -154,7 +154,8 @@ def walk_forward(panel: pd.DataFrame, horizon: int = 10, split: str = "discovery
     ``excess_long_{horizon}`` clipped at bounds from the training rows. A fold with
     fewer than ``config.MIN_N`` training rows or fewer than ``5 * horizon`` test dates
     is skipped. attrs: ``skipped`` [(year, reason)] (year None when the split has no
-    fold year at all), ``models`` {year: model}, ``train_dates`` {year: dates}.
+    fold year at all), ``models`` {year: model}, ``train_dates`` {year: dates},
+    ``train_only_years`` (the split's first ``min_train_years`` years, never tested).
     """
     info = _info(signal_info)
     target = f"excess_long_{horizon}"
@@ -162,7 +163,7 @@ def walk_forward(panel: pd.DataFrame, horizon: int = 10, split: str = "discovery
     in_split = np.flatnonzero((panel["split"] == split).to_numpy())
     regime_values = _regime_values(panel, in_split)          # same one-hot set for every fold
     all_dates = np.sort(pd.unique(dates[in_split]))
-    sp = in_split[panel[target].to_numpy()[in_split] == panel[target].to_numpy()[in_split]]   # drop NaN target
+    sp = in_split[~np.isnan(panel[target].to_numpy(dtype="float64")[in_split])]   # drop NaN target
     sp_dates = dates[sp]
     years = pd.DatetimeIndex(sp_dates).year.to_numpy()
     uniq = np.unique(years)
@@ -190,7 +191,8 @@ def walk_forward(panel: pd.DataFrame, horizon: int = 10, split: str = "discovery
         models[year] = model
         train_dates[year] = np.sort(pd.unique(dates[train_pos]))
         frames.append(_frame(panel, test_pos, year, pred, y_te))
-    attrs = {"skipped": skipped, "models": models, "train_dates": train_dates}
+    attrs = {"skipped": skipped, "models": models, "train_dates": train_dates,
+             "train_only_years": [int(y) for y in uniq[:min_train_years]]}
     if not frames:
         return _empty(attrs)
     out = pd.concat(frames, ignore_index=True)
@@ -306,7 +308,8 @@ def oos_metrics(pred: pd.DataFrame, horizon: int) -> pd.DataFrame:
 
 # ---- SHAP attribution ----
 SHAP_SUMMARY_COLS = ["feature", "kind", "mean_abs_shap", "mean_shap_when_on", "n_on", "rank"]
-SHAP_PAIR_COLS = ["a", "b", "mean_abs_interaction", "mean_interaction_when_both", "n_both"]
+SHAP_PAIR_COLS = ["a", "b", "mean_abs_interaction", "mean_interaction_when_both", "n_both", "insufficient"]
+DATE_CONSTANT_KIND = "regime (date-constant)"
 
 
 def _shap_sample(X: pd.DataFrame, rows: int) -> pd.DataFrame:
@@ -323,10 +326,17 @@ def _explainer(model):
     return shap.TreeExplainer(model)
 
 
+def _kind(col: str, info: dict) -> str:
+    if col in info:
+        return "signal"
+    return DATE_CONSTANT_KIND if col.startswith("market_regime=") else "regime"
+
+
 def shap_summary(model, X: pd.DataFrame, signal_info=None) -> pd.DataFrame:
     """Per-feature SHAP importance on a ``config.SHAP_ROWS`` sample of ``X`` (seed 0).
 
-    Columns: feature, kind ("signal" if in ``signal_info`` else "regime"),
+    Columns: feature, kind ("signal" if in ``signal_info``, "regime (date-constant)" for
+    ``market_regime=*`` (identical across assets on a date), else "regime"),
     mean_abs_shap, mean_shap_when_on (mean SHAP over rows where the feature is 1;
     NaN when ``n_on == 0``), n_on (within the sample), rank (1 = largest mean_abs_shap).
     """
@@ -338,7 +348,7 @@ def shap_summary(model, X: pd.DataFrame, signal_info=None) -> pd.DataFrame:
     with np.errstate(invalid="ignore", divide="ignore"):
         when_on = np.where(n_on > 0, (phi * on).sum(axis=0) / np.maximum(n_on, 1), np.nan)
     out = pd.DataFrame({"feature": list(X.columns),
-                        "kind": ["signal" if c in info else "regime" for c in X.columns],
+                        "kind": [_kind(c, info) for c in X.columns],
                         "mean_abs_shap": np.abs(phi).mean(axis=0) if len(Xs) else np.zeros(X.shape[1]),
                         "mean_shap_when_on": when_on, "n_on": n_on.astype(int)})
     out = out.sort_values("mean_abs_shap", ascending=False, kind="stable").reset_index(drop=True)
@@ -354,6 +364,7 @@ def shap_pair_interactions(model, X: pd.DataFrame, signal_info=None, top: int = 
     off-diagonal entry ``phi[:, i, j]`` as returned by shap, which is one symmetric
     half of the pair's interaction (phi[i, j] == phi[j, i]); it is NOT doubled.
     ``mean_interaction_when_both`` is NaN when ``n_both == 0`` (rows where both are 1).
+    ``insufficient`` is True when ``n_both < config.MIN_N_SLICE``.
     Sorted by ``mean_abs_interaction`` descending, cut to ``top``.
     """
     info = _info(signal_info)
@@ -372,6 +383,7 @@ def shap_pair_interactions(model, X: pd.DataFrame, signal_info=None, top: int = 
         n_both = int(both.sum())
         rows.append((a, b, float(np.abs(v).mean()) if len(v) else 0.0,
                      float(v[both].mean()) if n_both else np.nan, n_both))
-    out = pd.DataFrame(rows, columns=SHAP_PAIR_COLS)
+    out = pd.DataFrame(rows, columns=SHAP_PAIR_COLS[:-1])
+    out["insufficient"] = out["n_both"] < config.MIN_N_SLICE
     out = out.sort_values("mean_abs_interaction", ascending=False, kind="stable")
     return out.head(top).reset_index(drop=True)

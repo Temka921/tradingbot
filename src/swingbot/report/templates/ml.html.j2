@@ -38,6 +38,7 @@
 {% if v.oos_rows %}<div class="scroll"><table><tr>{% for h in oos_headers %}<th>{{ h }}</th>{% endfor %}</tr>
 {% for r in v.oos_rows %}<tr{% if r.insufficient %} class="insuf"{% endif %}>{% for c in r.cells %}<td>{{ c }}</td>{% endfor %}</tr>
 {% endfor %}</table></div>{% else %}<p>No walk-forward fold could be scored.</p>{% endif %}
+{% if v.one_fold %}<p><b>Only one walk-forward fold ({{ v.one_fold[0] }}); the 'all' row equals it.</b> Years {{ v.one_fold[1] }} were used for training only (min_train_years=3).</p>{% endif %}
 <h4>Skipped folds</h4>
 {% if v.skipped %}<ul>{% for s in v.skipped %}<li>{{ s }}</li>{% endfor %}</ul>{% else %}<p>None.</p>{% endif %}
 
@@ -45,22 +46,25 @@
 {% if v.val_rows %}<div class="scroll"><table><tr>{% for h in oos_headers %}<th>{{ h }}</th>{% endfor %}</tr>
 {% for r in v.val_rows %}<tr{% if r.insufficient %} class="insuf"{% endif %}>{% for c in r.cells %}<td>{{ c }}</td>{% endfor %}</tr>
 {% endfor %}</table></div>{% else %}<p>No validation score: {% for s in v.skipped_val %}{{ s }}{% if not loop.last %}; {% endif %}{% endfor %}.</p>{% endif %}
+{% if v.val_warning %}<p class="caveat"><b>Validation does not confirm the walk-forward result.</b></p>{% endif %}
 
 <h3>ML versus the best solo rule</h3>
-<p class="cmp">ML walk-forward top-decile spread ("all" row): <b>{{ v.ml_spread if v.ml_spread else "n/a" }} bps</b>.
+<p class="cmp">ML walk-forward top-decile spread ("all" row): <b>{% if v.ml_spread %}{{ v.ml_spread }} bps{% else %}n/a{% endif %}</b>.
 Best solo candidate in this view: {% if v.best %}<b>{{ v.best.signal }}</b>, edge vs same-day average <b>{{ v.best.edge_bps }} bps</b>{% else %}<b>none</b> (no signal passes the candidate verdict){% endif %}.</p>
+<p>{{ compare_note.format(n=v.n_signals) }}</p>
 
 {% if v.has_model %}
 <h3>SHAP importance</h3>
+{% if v.view == "stock" %}<p class="caveat">{{ stock_note }}</p>{% endif %}
 <div class="plot">{{ v.shap_chart|safe }}</div>
 <div class="scroll"><table><tr>{% for h in shap_headers %}<th>{{ h }}</th>{% endfor %}</tr>
 {% for r in v.shap_rows %}<tr>{% for c in r.cells %}<td>{{ c }}</td>{% endfor %}</tr>
 {% endfor %}</table></div>
 
 <h3>Top 30 SHAP pair interactions</h3>
-<p>Same-direction signal pairs, joined with the Phase 4 pair verdict and lift for this view. Interaction values are the raw off-diagonal entries, half of the full pairwise effect.</p>
+<p>Same-direction signal pairs, joined with the Phase 4 pair verdict and lift for this view. Interaction values are the raw off-diagonal entries, half of the full pairwise effect. They are computed on a random sample of {{ inter_rows_n }} rows; pairs with fewer than 30 rows where both fire are insufficient (grey, value blanked).</p>
 {% if v.inter_rows %}<div class="scroll"><table><tr>{% for h in inter_headers %}<th>{{ h }}</th>{% endfor %}</tr>
-{% for r in v.inter_rows %}<tr>{% for c in r.cells %}<td>{{ c }}</td>{% endfor %}</tr>
+{% for r in v.inter_rows %}<tr{% if r.insufficient %} class="insuf"{% endif %}>{% for c in r.cells %}<td>{{ c }}</td>{% endfor %}</tr>
 {% endfor %}</table></div>{% else %}<p>No signal pairs.</p>{% endif %}
 {% else %}
 <h3>SHAP</h3>

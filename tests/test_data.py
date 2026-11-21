@@ -163,6 +163,25 @@ def test_fetch_binance_archive_ms_and_us(monkeypatch):
     assert df["close"].dtype == float
 
 
+def test_fetch_binance_archive_header_row_and_start(monkeypatch):
+    ms = lambda d: int(pd.Timestamp(d).timestamp() * 1000)  # noqa: E731
+    header = "open_time,open,high,low,close,volume,close_time,qav,trades,tbb,tbq,ignore\n"
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("x.csv", header + "\n".join(
+            ",".join(str(c) for c in _arow(ms(d))) for d in ["2016-12-31", "2021-03-01", "2021-03-02"]))
+    key = "data/spot/monthly/klines/HDRUSDT/1d/HDRUSDT-1d-2021-03.zip"
+    listing = ('<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><IsTruncated>false</IsTruncated>'
+               f"<Contents><Key>{key}</Key></Contents></ListBucketResult>")
+    monkeypatch.setattr(binance.requests, "get", lambda url, **k: FakeText(
+        listing if url == binance.ARCHIVE_LIST_URL else "", content=buf.getvalue()))
+    df = binance.fetch_binance_archive("HDRUSDT")  # 2016-12-31 is before the default start
+    assert list(df.index) == list(pd.to_datetime(["2021-03-01", "2021-03-02"]))
+    assert df["close"].dtype == float
+    df2 = binance.fetch_binance_archive("HDRUSDT", start="2021-03-02")
+    assert list(df2.index) == list(pd.to_datetime(["2021-03-02"]))
+
+
 def test_fetch_binance_archive_empty_and_start(monkeypatch):
     empty = '<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><IsTruncated>false</IsTruncated></ListBucketResult>'
     monkeypatch.setattr(binance.requests, "get", lambda *a, **k: FakeText(empty))

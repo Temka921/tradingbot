@@ -112,6 +112,10 @@ def fetch_binance_archive(symbol: str, start: str = "2017-01-01") -> pd.DataFram
         return _empty_bars()
     df = pd.concat(frames, ignore_index=True)
     df.columns = ["open_time"] + COLUMNS
+    df = df.apply(pd.to_numeric, errors="coerce")  # a header row becomes NaN and is dropped
+    df = df.dropna(subset=["open_time"])
+    if df.empty:
+        return _empty_bars()
     t = df["open_time"].astype("int64")
     t = t.where(t <= 10**14, t // 1000)  # microseconds (2025+) -> ms
     idx = pd.to_datetime(t, unit="ms").dt.normalize()

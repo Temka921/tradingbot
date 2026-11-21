@@ -18,6 +18,7 @@ import pandas as pd
 
 from swingbot import config
 from swingbot.analysis.solo import clip_bounds, clip_values
+from swingbot.analysis.stats import hac_test
 from swingbot.signals import SIGNAL_INFO
 
 REGIME_FEATURES = ["trend_regime", "vol_regime", "market_regime", "adx_regime"]
@@ -30,33 +31,45 @@ def _info(signal_info: dict[str, tuple[str, str]] | None) -> dict[str, tuple[str
     return SIGNAL_INFO if signal_info is None else signal_info
 
 
-def _regime_values(panel: pd.DataFrame) -> dict[str, list[str]]:
-    """Sorted non-"unknown", non-NaN values per regime column present in ``panel``."""
+def _regime_values(panel: pd.DataFrame, pos: np.ndarray | None = None) -> dict[str, list[str]]:
+    """Sorted non-"unknown", non-NaN values per regime column present in ``panel`` (rows ``pos`` if given)."""
     out: dict[str, list[str]] = {}
     for col in REGIME_FEATURES:
         if col not in panel.columns:
             continue
-        vals = pd.unique(panel[col].dropna().astype(str))
+        ser = panel[col] if pos is None else panel[col].iloc[pos]
+        vals = pd.unique(ser.dropna().astype(str))
         out[col] = sorted(v for v in vals if v != UNKNOWN)
     return out
 
 
-def _features(panel: pd.DataFrame, info: dict, regime_values: dict[str, list[str]]) -> pd.DataFrame:
-    """float32 feature frame with a fixed column set (signals, then regime one-hots)."""
+def _features(panel: pd.DataFrame, info: dict, regime_values: dict[str, list[str]],
+              pos: np.ndarray | None = None) -> pd.DataFrame:
+    """float32 feature frame with a fixed column set (signals, then regime one-hots).
+
+    With ``pos`` only those integer row positions are densified, one column at a
+    time, so a full-width copy of the panel is never made.
+    """
     missing = [s for s in info if s not in panel.columns]
     if missing:
         raise KeyError(f"signal columns missing from panel: {missing}")
+    n = len(panel) if pos is None else len(pos)
     cols: dict[str, np.ndarray] = {}
     for name in info:
-        cols[name] = panel[name].to_numpy(dtype=bool).astype("float32")
+        arr = panel[name].to_numpy(dtype=bool)
+        cols[name] = (arr if pos is None else arr[pos]).astype("float32")
     for col, values in regime_values.items():
-        labels = panel[col].astype(object).to_numpy() if col in panel.columns else None
+        labels = None
+        if col in panel.columns:
+            ser = panel[col] if pos is None else panel[col].iloc[pos]
+            labels = ser.astype(object).to_numpy()
         for v in values:
             if labels is None:
-                cols[f"{col}={v}"] = np.zeros(len(panel), dtype="float32")
+                cols[f"{col}={v}"] = np.zeros(n, dtype="float32")
             else:
                 cols[f"{col}={v}"] = (labels == v).astype("float32")
-    return pd.DataFrame(cols, index=panel.index)
+    index = panel.index if pos is None else panel.index[pos]
+    return pd.DataFrame(cols, index=index)
 
 
 def feature_matrix(panel: pd.DataFrame, signal_info=None) -> pd.DataFrame:
@@ -106,22 +119,28 @@ def _embargo_cutoff(dates: np.ndarray, first_test: pd.Timestamp, horizon: int) -
     return pd.Timestamp(before[-(horizon + 1)])
 
 
-def _fit_and_score(train: pd.DataFrame, test: pd.DataFrame, target: str, info: dict,
-                   regime_values: dict[str, list[str]]) -> tuple[lgb.LGBMRegressor, np.ndarray, np.ndarray]:
-    """Fit on ``train`` (clip bounds from all its rows; features built on the fit sample only)."""
-    y_tr_raw = train[target].to_numpy(dtype="float64")
+def _fit_and_score(panel: pd.DataFrame, train_pos: np.ndarray, test_pos: np.ndarray, target: str,
+                   info: dict, regime_values: dict[str, list[str]]
+                   ) -> tuple[lgb.LGBMRegressor, np.ndarray, np.ndarray]:
+    """Fit on panel rows ``train_pos`` (clip bounds from all of them; features built on the fit sample only).
+
+    Works on integer positions and only the needed columns, so no full-width
+    copy of the train or test rows is made.
+    """
+    y_all = panel[target].to_numpy(dtype="float64")
+    y_tr_raw = y_all[train_pos]
     bounds = clip_bounds(y_tr_raw)
-    pos = _sample_positions(len(train))        # sample before densifying features
-    if pos is not None:
-        train, y_tr_raw = train.iloc[pos], y_tr_raw[pos]
-    model = fit_model(_features(train, info, regime_values), clip_values(y_tr_raw, bounds))
-    y_te = clip_values(test[target].to_numpy(dtype="float64"), bounds)
-    pred = _predict(model, _features(test, info, regime_values))
+    spos = _sample_positions(len(train_pos))        # sample before densifying features
+    if spos is not None:
+        train_pos, y_tr_raw = train_pos[spos], y_tr_raw[spos]
+    model = fit_model(_features(panel, info, regime_values, train_pos), clip_values(y_tr_raw, bounds))
+    y_te = clip_values(y_all[test_pos], bounds)
+    pred = _predict(model, _features(panel, info, regime_values, test_pos))
     return model, pred, y_te
 
 
-def _frame(test: pd.DataFrame, fold, pred: np.ndarray, y: np.ndarray) -> pd.DataFrame:
-    return pd.DataFrame({"date": test["date"].to_numpy(), "asset": test["asset"].to_numpy(),
+def _frame(panel: pd.DataFrame, test_pos: np.ndarray, fold, pred: np.ndarray, y: np.ndarray) -> pd.DataFrame:
+    return pd.DataFrame({"date": panel["date"].to_numpy()[test_pos], "asset": panel["asset"].to_numpy()[test_pos],
                          "fold": fold, "pred": pred, "target": y})
 
 
@@ -139,11 +158,13 @@ def walk_forward(panel: pd.DataFrame, horizon: int = 10, split: str = "discovery
     """
     info = _info(signal_info)
     target = f"excess_long_{horizon}"
-    sp = panel.loc[(panel["split"] == split).to_numpy()]
-    regime_values = _regime_values(sp)          # same one-hot set for every fold
-    all_dates = np.sort(sp["date"].unique())
-    sp = sp.loc[sp[target].notna().to_numpy()]
-    years = sp["date"].dt.year.to_numpy()
+    dates = panel["date"].to_numpy()
+    in_split = np.flatnonzero((panel["split"] == split).to_numpy())
+    regime_values = _regime_values(panel, in_split)          # same one-hot set for every fold
+    all_dates = np.sort(pd.unique(dates[in_split]))
+    sp = in_split[panel[target].to_numpy()[in_split] == panel[target].to_numpy()[in_split]]   # drop NaN target
+    sp_dates = dates[sp]
+    years = pd.DatetimeIndex(sp_dates).year.to_numpy()
     uniq = np.unique(years)
     skipped: list[tuple] = []
     models: dict[int, lgb.LGBMRegressor] = {}
@@ -154,20 +175,21 @@ def walk_forward(panel: pd.DataFrame, horizon: int = 10, split: str = "discovery
                               f"min_train_years={min_train_years}"))
     for year in uniq[min_train_years:]:
         year = int(year)
-        test = sp.loc[years == year]
-        n_test_dates = test["date"].nunique()
+        test_pos = sp[years == year]
+        test_d = sp_dates[years == year]
+        n_test_dates = len(pd.unique(test_d))
         if n_test_dates < 5 * horizon:
             skipped.append((year, f"{n_test_dates} test dates < {5 * horizon}"))
             continue
-        cutoff = _embargo_cutoff(all_dates, test["date"].min(), horizon)
-        train = sp.iloc[:0] if cutoff is None else sp.loc[(sp["date"] < cutoff).to_numpy()]
-        if len(train) < config.MIN_N:
-            skipped.append((year, f"{len(train)} training rows < {config.MIN_N}"))
+        cutoff = _embargo_cutoff(all_dates, pd.Timestamp(test_d.min()), horizon)
+        train_pos = sp[:0] if cutoff is None else sp[sp_dates < np.datetime64(cutoff)]
+        if len(train_pos) < config.MIN_N:
+            skipped.append((year, f"{len(train_pos)} training rows < {config.MIN_N}"))
             continue
-        model, pred, y_te = _fit_and_score(train, test, target, info, regime_values)
+        model, pred, y_te = _fit_and_score(panel, train_pos, test_pos, target, info, regime_values)
         models[year] = model
-        train_dates[year] = np.sort(train["date"].unique())
-        frames.append(_frame(test, year, pred, y_te))
+        train_dates[year] = np.sort(pd.unique(dates[train_pos]))
+        frames.append(_frame(panel, test_pos, year, pred, y_te))
     attrs = {"skipped": skipped, "models": models, "train_dates": train_dates}
     if not frames:
         return _empty(attrs)
@@ -189,20 +211,94 @@ def fit_discovery_score_validation(panel: pd.DataFrame, horizon: int = 10, signa
     info = _info(signal_info)
     target = f"excess_long_{horizon}"
     split = panel["split"].astype(str).to_numpy()
-    both = panel.loc[np.isin(split, ["discovery", "validation"])]
-    regime_values = _regime_values(both)
-    disc = panel.loc[split == "discovery"]
-    val = panel.loc[split == "validation"]
-    all_dates = np.sort(both["date"].unique())
-    disc = disc.loc[disc[target].notna().to_numpy()]
-    val = val.loc[val[target].notna().to_numpy()]
-    if val.empty:
+    dates = panel["date"].to_numpy()
+    y = panel[target].to_numpy(dtype="float64")
+    both = np.flatnonzero(np.isin(split, ["discovery", "validation"]))
+    regime_values = _regime_values(panel, both)
+    all_dates = np.sort(pd.unique(dates[both]))
+    ok = ~np.isnan(y)
+    disc_pos = np.flatnonzero((split == "discovery") & ok)
+    val_pos = np.flatnonzero((split == "validation") & ok)
+    if not len(val_pos):
         return None, _empty({"skipped": [("validation", "no validation rows")]})
-    cutoff = _embargo_cutoff(all_dates, val["date"].min(), horizon)
-    train = disc.iloc[:0] if cutoff is None else disc.loc[(disc["date"] < cutoff).to_numpy()]
-    if len(train) < config.MIN_N:
-        return None, _empty({"skipped": [("validation", f"{len(train)} training rows < {config.MIN_N}")]})
-    model, pred, y_val = _fit_and_score(train, val, target, info, regime_values)
-    out = _frame(val, "validation", pred, y_val)
-    out.attrs.update({"skipped": [], "train_dates": np.sort(train["date"].unique())})
+    cutoff = _embargo_cutoff(all_dates, pd.Timestamp(dates[val_pos].min()), horizon)
+    train_pos = disc_pos[:0] if cutoff is None else disc_pos[dates[disc_pos] < np.datetime64(cutoff)]
+    if len(train_pos) < config.MIN_N:
+        return None, _empty({"skipped": [("validation", f"{len(train_pos)} training rows < {config.MIN_N}")]})
+    model, pred, y_val = _fit_and_score(panel, train_pos, val_pos, target, info, regime_values)
+    out = _frame(panel, val_pos, "validation", pred, y_val)
+    out.attrs.update({"skipped": [], "train_dates": np.sort(pd.unique(dates[train_pos]))})
     return model, out
+
+
+# ---- out-of-sample metrics ----
+OOS_COLS = ["fold", "n", "n_dates", "ic_mean", "ic_t", "ic_p", "spread_mean", "spread_t", "spread_p",
+            "top_mean", "top_ret_n", "insufficient"]
+IC_MIN_ROWS = 5
+TOP_FRAC = 0.1
+
+
+def _per_date(df: pd.DataFrame) -> pd.DataFrame:
+    """Per-date rank IC, top-decile spread and top-decile mean target (vectorised groupby, no date loop)."""
+    pred = df["pred"].to_numpy(dtype="float64")
+    tgt = df["target"].to_numpy(dtype="float64")
+    g = pd.DataFrame({"date": df["date"].to_numpy(), "p": pred, "t": tgt})
+    by = g.groupby("date", sort=True)
+    n = by["p"].transform("size").to_numpy()
+    # Spearman = Pearson of average ranks within date
+    rp = by["p"].rank(method="average").to_numpy()
+    rt = by["t"].rank(method="average").to_numpy()
+    g["rp"], g["rt"] = rp, rt
+    mp = g.groupby("date", sort=True)["rp"].transform("mean").to_numpy()
+    mt = g.groupby("date", sort=True)["rt"].transform("mean").to_numpy()
+    dp, dt_ = rp - mp, rt - mt
+    g["pp"], g["tt"], g["pt"] = dp * dp, dt_ * dt_, dp * dt_
+    s = g.groupby("date", sort=True)[["pp", "tt", "pt"]].sum()
+    size = by.size()
+    pmax, pmin = by["p"].max(), by["p"].min()
+    with np.errstate(divide="ignore", invalid="ignore"):
+        ic = s["pt"] / np.sqrt(s["pp"] * s["tt"])
+    bad = (size < IC_MIN_ROWS) | (pmax == pmin) | ~np.isfinite(ic)
+    ic = ic.where(~bad)
+    # top 10% of pred (>= 1 row), ties broken by order of appearance
+    k = np.maximum(np.ceil(TOP_FRAC * n), 1)
+    top = by["p"].rank(method="first", ascending=False).to_numpy() <= k
+    g["top_t"] = np.where(top, tgt, np.nan)
+    top_mean = g.groupby("date", sort=True)["top_t"].mean()
+    top_n = g.groupby("date", sort=True)["top_t"].count()
+    all_mean = by["t"].mean()
+    return pd.DataFrame({"ic": ic, "spread": top_mean - all_mean, "top_mean": top_mean, "top_n": top_n})
+
+
+def _oos_row(fold, df: pd.DataFrame, horizon: int) -> dict:
+    d = _per_date(df)
+    n_dates = len(d)
+    ic = hac_test(d["ic"].dropna().sort_index(), horizon, len(df))
+    sp = hac_test(d["spread"].dropna().sort_index(), horizon, len(df))
+    return {"fold": fold, "n": int(len(df)), "n_dates": int(n_dates),
+            "ic_mean": ic.mean if ic.n_dates else np.nan, "ic_t": ic.t, "ic_p": ic.p,
+            "spread_mean": sp.mean if sp.n_dates else np.nan, "spread_t": sp.t, "spread_p": sp.p,
+            "top_mean": float(d["top_mean"].mean()) if n_dates else np.nan,
+            "top_ret_n": int(d["top_n"].sum()), "insufficient": bool(n_dates < 5 * horizon)}
+
+
+def oos_metrics(pred: pd.DataFrame, horizon: int) -> pd.DataFrame:
+    """Out-of-sample rank IC and top-decile spread per fold, plus an ``"all"`` row.
+
+    ``"all"`` pools every fold except ``"validation"`` (never pooled with walk-forward).
+    Rows: folds sorted by year, ``"all"``, then ``"validation"`` if present. No q-values.
+    """
+    if pred.empty:
+        return pd.DataFrame({c: pd.Series(dtype=object) for c in OOS_COLS})
+    is_val = pred["fold"].astype(str).to_numpy() == "validation"
+    wf = pred.loc[~is_val]
+    rows = []
+    for fold in sorted(pd.unique(wf["fold"])):
+        rows.append(_oos_row(fold, wf.loc[wf["fold"] == fold], horizon))
+    if len(wf):
+        rows.append(_oos_row("all", wf, horizon))
+    if is_val.any():
+        rows.append(_oos_row("validation", pred.loc[is_val], horizon))
+    out = pd.DataFrame(rows, columns=OOS_COLS)
+    out["fold"] = out["fold"].astype(object)
+    return out

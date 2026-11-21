@@ -149,3 +149,89 @@ def test_validation_scoring():
     assert list(pred.columns) == ["date", "asset", "fold", "pred", "target"]
     m = pred.merge(p[["date", "asset", "A"]], on=["date", "asset"])
     assert m.loc[m.A, "pred"].mean() - m.loc[~m.A, "pred"].mean() > 0.01
+
+
+# ---- Task 2: out-of-sample metrics ----
+from swingbot.analysis.attribution import oos_metrics  # noqa: E402
+
+OOS_COLS = ["fold", "n", "n_dates", "ic_mean", "ic_t", "ic_p", "spread_mean", "spread_t", "spread_p",
+            "top_mean", "top_ret_n", "insufficient"]
+
+
+def _oos_frame(n_dates=60, n_assets=20, fold=2013, seed=0, pred_from_target=False, start="2013-01-01"):
+    rng = np.random.default_rng(seed)
+    dates = pd.bdate_range(start, periods=n_dates)
+    df = pd.MultiIndex.from_product([dates, range(n_assets)], names=["date", "asset"]).to_frame(index=False)
+    df["asset"] = df["asset"].astype(str)
+    df["fold"] = fold
+    df["target"] = rng.normal(0, 0.02, len(df))
+    df["pred"] = df["target"] if pred_from_target else rng.normal(0, 1, len(df))
+    return df[["date", "asset", "fold", "pred", "target"]]
+
+
+def test_ic_perfect_and_null():
+    m = oos_metrics(_oos_frame(pred_from_target=True), horizon=5)
+    assert list(m.columns) == OOS_COLS
+    row = m.loc[m.fold == 2013].iloc[0]
+    assert row.ic_mean == pytest.approx(1.0)
+    null = oos_metrics(_oos_frame(n_dates=300, n_assets=40, seed=3), horizon=5)
+    assert abs(null.loc[null.fold == "all", "ic_mean"].iloc[0]) < 0.05
+
+
+def test_constant_pred_gives_nan_ic():
+    f = _oos_frame()
+    f["pred"] = 0.5
+    m = oos_metrics(f, horizon=5).iloc[0]
+    assert np.isnan(m.ic_mean) and np.isnan(m.ic_t) and np.isnan(m.ic_p)
+
+
+def test_ic_nan_on_dates_with_fewer_than_5_rows():
+    f = _oos_frame(n_assets=4, pred_from_target=True)
+    assert np.isnan(oos_metrics(f, horizon=5).iloc[0].ic_mean)
+
+
+def test_spread_matches_hand_example():
+    d1, d2 = pd.Timestamp("2013-01-02"), pd.Timestamp("2013-01-03")
+    rows = []
+    for d, tg, top_asset in ((d1, np.arange(10) / 100.0, 3), (d2, np.arange(10)[::-1] / 50.0, 7)):
+        for i in range(10):
+            rows.append((d, str(i), 2013, 10.0 if i == top_asset else float(i % 3) - 5.0, tg[i]))
+    f = pd.DataFrame(rows, columns=["date", "asset", "fold", "pred", "target"])
+    m = oos_metrics(f, horizon=1).iloc[0]
+    s1 = 0.03 - np.arange(10).mean() / 100.0
+    s2 = (np.arange(10)[::-1] / 50.0)[7] - (np.arange(10) / 50.0).mean()
+    assert m.spread_mean == pytest.approx((s1 + s2) / 2)
+    assert m.top_mean == pytest.approx((0.03 + 0.04) / 2)
+    assert m.top_ret_n == 2 and m.n == 20 and m.n_dates == 2
+    assert m.insufficient            # 2 dates < 5*1
+
+
+def test_top_decile_takes_ceil_with_ties_deterministic():
+    f = _oos_frame(n_dates=10, n_assets=25)            # ceil(2.5) = 3 rows per date
+    f["pred"] = 1.0
+    m = oos_metrics(f, horizon=1).iloc[0]
+    assert m.top_ret_n == 30
+    assert m.equals(oos_metrics(f, horizon=1).iloc[0])
+
+
+def test_all_row_pools_walk_forward_only():
+    a = _oos_frame(fold=2013, start="2013-01-01")
+    b = _oos_frame(fold=2014, start="2014-01-01", seed=1)
+    v = _oos_frame(fold="validation", start="2022-01-03", seed=2)
+    m = oos_metrics(pd.concat([v, b, a], ignore_index=True), horizon=5)
+    assert list(m.fold) == [2013, 2014, "all", "validation"]
+    assert m.loc[m.fold == "all", "n"].iloc[0] == len(a) + len(b)
+    assert m.loc[m.fold == "validation", "n"].iloc[0] == len(v)
+    assert not m.loc[m.fold == "all", "insufficient"].iloc[0]       # 120 dates >= 25
+
+
+def test_oos_empty_input():
+    m = oos_metrics(pd.DataFrame({"date": [], "asset": [], "fold": [], "pred": [], "target": []}), 5)
+    assert list(m.columns) == OOS_COLS and m.empty
+
+
+def test_oos_on_walk_forward_output():
+    out = walk_forward(synth_ml(), horizon=10, signal_info=INFO)
+    m = oos_metrics(out, horizon=10)
+    assert list(m.fold) == [2013, 2014, 2015, "all"]
+    assert m.loc[m.fold == "all", "ic_mean"].iloc[0] > 0

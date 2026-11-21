@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Swing research: ML attribution {{ stamp }}</title>
+<script src="{{ cdn }}"></script>
+<style>
+ body{font-family:system-ui,Segoe UI,Arial,sans-serif;margin:0 auto;padding:12px 16px;max-width:1200px;color:#1b1f24;background:#fff;overflow-wrap:anywhere}
+ h1{font-size:1.4rem} h2{font-size:1.15rem;margin-top:2rem;border-bottom:1px solid #ccd;padding-bottom:4px}
+ .caveat{background:#fff4d6;border:1px solid #e0b84a;padding:10px 12px;border-radius:6px}
+ .how{background:#eef3fb;border:1px solid #b9c9e6;padding:8px 12px;border-radius:6px;font-size:.92rem}
+ .cmp{background:#eef7ee;border:1px solid #a9cfa9;padding:8px 12px;border-radius:6px}
+ .scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;max-width:100%}
+ table{border-collapse:collapse;font-size:.82rem;white-space:nowrap}
+ th,td{border:1px solid #d5d9e0;padding:3px 7px;text-align:right} th{background:#f0f2f6;position:sticky;top:0}
+ td:first-child,th:first-child{text-align:left}
+ tr.insuf td{color:#9aa0a8;background:#f6f6f6}
+ .plot{max-width:100%;overflow-x:auto}
+</style></head><body>
+<h1>Swing research report: ML attribution (horizon {{ horizon }} days)</h1>
+<p>Generated {{ stamp }}. Research tool only; not trading or investment advice.</p>
+
+<div class="caveat"><strong>Caveats.</strong>
+<p>{{ survivorship }}</p>
+<p>{{ ml_caveat }}</p>
+<p>{{ short_note }}</p></div>
+
+<div class="how"><strong>How to read this.</strong>
+<ul>
+<li>A LightGBM regressor predicts the clipped excess return of a long trade (next-open entry, net of costs, over the benchmark) from the signal flags and regime labels known at the close of day t. Each walk-forward fold trains on earlier calendar years (with an embargo of horizon+1 dates) and scores one later year.</li>
+<li><b>Rank IC</b>: per-date Spearman correlation of prediction and outcome across assets, averaged over dates. <b>Top-decile spread</b>: per-date mean outcome of the top 10% of predictions minus the all-asset mean, in bps. t and p use date-clustered HAC errors. Rows with fewer than 5×horizon dates are insufficient (grey).</li>
+<li><b>SHAP</b> values are in bps of predicted excess return; "when on" averages over rows where the feature fires.</li>
+</ul></div>
+
+{% for v in views %}
+<h2>{{ loop.index }}. {{ v.view }}{% if v.suspect %} ({{ suspect_label|safe }}){% elif v.primary %} (primary){% endif %}</h2>
+
+<h3>Out-of-sample scores (walk-forward, discovery)</h3>
+{% if v.oos_rows %}<div class="scroll"><table><tr>{% for h in oos_headers %}<th>{{ h }}</th>{% endfor %}</tr>
+{% for r in v.oos_rows %}<tr{% if r.insufficient %} class="insuf"{% endif %}>{% for c in r.cells %}<td>{{ c }}</td>{% endfor %}</tr>
+{% endfor %}</table></div>{% else %}<p>No walk-forward fold could be scored.</p>{% endif %}
+<h4>Skipped folds</h4>
+{% if v.skipped %}<ul>{% for s in v.skipped %}<li>{{ s }}</li>{% endfor %}</ul>{% else %}<p>None.</p>{% endif %}
+
+<h3>Validation (model fitted on all discovery rows)</h3>
+{% if v.val_rows %}<div class="scroll"><table><tr>{% for h in oos_headers %}<th>{{ h }}</th>{% endfor %}</tr>
+{% for r in v.val_rows %}<tr{% if r.insufficient %} class="insuf"{% endif %}>{% for c in r.cells %}<td>{{ c }}</td>{% endfor %}</tr>
+{% endfor %}</table></div>{% else %}<p>No validation score: {% for s in v.skipped_val %}{{ s }}{% if not loop.last %}; {% endif %}{% endfor %}.</p>{% endif %}
+
+<h3>ML versus the best solo rule</h3>
+<p class="cmp">ML walk-forward top-decile spread ("all" row): <b>{{ v.ml_spread if v.ml_spread else "n/a" }} bps</b>.
+Best solo candidate in this view: {% if v.best %}<b>{{ v.best.signal }}</b>, edge vs same-day average <b>{{ v.best.edge_bps }} bps</b>{% else %}<b>none</b> (no signal passes the candidate verdict){% endif %}.</p>
+
+{% if v.has_model %}
+<h3>SHAP importance</h3>
+<div class="plot">{{ v.shap_chart|safe }}</div>
+<div class="scroll"><table><tr>{% for h in shap_headers %}<th>{{ h }}</th>{% endfor %}</tr>
+{% for r in v.shap_rows %}<tr>{% for c in r.cells %}<td>{{ c }}</td>{% endfor %}</tr>
+{% endfor %}</table></div>
+
+<h3>Top 30 SHAP pair interactions</h3>
+<p>Same-direction signal pairs, joined with the Phase 4 pair verdict and lift for this view. Interaction values are the raw off-diagonal entries, half of the full pairwise effect.</p>
+{% if v.inter_rows %}<div class="scroll"><table><tr>{% for h in inter_headers %}<th>{{ h }}</th>{% endfor %}</tr>
+{% for r in v.inter_rows %}<tr>{% for c in r.cells %}<td>{{ c }}</td>{% endfor %}</tr>
+{% endfor %}</table></div>{% else %}<p>No signal pairs.</p>{% endif %}
+{% else %}
+<h3>SHAP</h3>
+<p>Skipped: no model could be fitted ({% for s in v.skipped_val %}{{ s }}{% if not loop.last %}; {% endif %}{% endfor %}).</p>
+{% endif %}
+{% endfor %}
+</body></html>

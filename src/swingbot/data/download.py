@@ -6,7 +6,7 @@ import pandas as pd
 
 from swingbot import config
 from swingbot.data import store
-from swingbot.data.binance import fetch_binance
+from swingbot.data.binance import fetch_crypto
 from swingbot.data.quality import check_bars
 from swingbot.data.universe import AssetMeta
 from swingbot.data.yahoo import fetch_yahoo
@@ -15,7 +15,7 @@ from swingbot.data.yahoo import fetch_yahoo
 def default_fetch(asset: AssetMeta) -> pd.DataFrame:
     if asset.market == "stock":
         return fetch_yahoo(asset.symbol)
-    return fetch_binance(asset.symbol)
+    return fetch_crypto(asset.symbol)
 
 
 _sleep = time.sleep  # patchable in tests

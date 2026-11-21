@@ -13,7 +13,9 @@ UA = {"User-Agent": "Mozilla/5.0 (compatible; swingbot-research/0.1)"}
 SP500_URL = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
 SP400_URL = "https://en.wikipedia.org/wiki/List_of_S%26P_400_companies"
 STABLE_BASES = {"USDC", "FDUSD", "TUSD", "DAI", "USDP", "BUSD", "EUR", "USDE",
-                "USD1", "PYUSD", "RLUSD", "USDS", "XUSD", "RWUSD", "U"}
+                "USD1", "PYUSD", "RLUSD", "USDS", "XUSD", "RWUSD", "U",
+                "PAX", "USDSB", "UST", "SUSD", "EURI", "AEUR", "VAI"}
+FIAT_BASES = {"EUR", "GBP", "AUD", "BRL", "TRY", "RUB", "NGN", "UAH", "ZAR", "JPY", "BIDR", "IDRT", "BVND"}
 # Non-core exclusions: wrapped/duplicate BTC and tokenized gold (not independent crypto assets).
 WRAPPED_OR_COMMODITY_BASES = {"WBTC", "PAXG", "XAUT"}
 # Binance tokenized stocks/ETFs trade as <TICKER>B. A suffix heuristic would drop real coins
@@ -51,7 +53,7 @@ def excluded_crypto_base(base: str, listed: frozenset[str] | set[str] = frozense
     this keeps JUP, SYRUP etc."""
     if not (base.isascii() and base.isalnum()):
         return True
-    if base in STABLE_BASES or base.endswith("USD") or base in WRAPPED_OR_COMMODITY_BASES:
+    if base in STABLE_BASES or base in FIAT_BASES or base.endswith("USD") or base in WRAPPED_OR_COMMODITY_BASES:
         return True
     if base in TOKENIZED_EQUITY_BASES:
         return True
@@ -116,30 +118,28 @@ def stock_universe() -> list[AssetMeta]:
     return [a for a in stocks + _etfs() if not (a.symbol in seen or seen.add(a.symbol))]
 
 
-def crypto_universe(n: int = 60) -> list[AssetMeta]:
+def crypto_universe(n: int | None = None) -> list[AssetMeta]:
+    """Every USDT pair ever listed on Binance (archive = live + delisted, plus live tickers),
+    minus stables/fiat/wrapped/leveraged/tokenized. No volume ranking: liquidity eligibility is
+    point-in-time in the panel. BTC and ETH first, the rest sorted by symbol."""
     cache = UNIVERSE_DIR / "crypto.csv"
     if cache.exists():
-        return _read_cache(cache)[:n]
+        assets = _read_cache(cache)
+        return assets[:n] if n else assets
     resp = requests.get(f"{binance.BASE_URL}/api/v3/ticker/24hr", timeout=30)
     resp.raise_for_status()
-    rows = []
-    tickers = resp.json()
-    listed = {t["symbol"][:-4] for t in tickers if t["symbol"].endswith("USDT")}
-    for t in tickers:
-        sym = t["symbol"]
-        if not sym.endswith("USDT"):
-            continue
-        base = sym[: -len("USDT")]
-        if excluded_crypto_base(base, listed):
-            continue
-        rows.append((sym, base, float(t["quoteVolume"])))
-    rows.sort(key=lambda r: r[2], reverse=True)
+    live = {t["symbol"] for t in resp.json() if t["symbol"].endswith("USDT")}
+    syms = sorted(set(binance.list_archive_symbols("USDT")) | live)
+    listed = {s[: -len("USDT")] for s in syms}
+    bases = [(s, s[: -len("USDT")]) for s in syms]
+    bases = [(s, b) for s, b in bases if not excluded_crypto_base(b, listed)]
+    bases.sort(key=lambda r: (r[1] not in ("BTC", "ETH"), r[1] != "BTC", r[0]))
     assets = [
-        AssetMeta(sym, "crypto", "crypto", "major" if base in MAJORS else "alt", False, base in MAJORS)
-        for sym, base, _ in rows[:n]
+        AssetMeta(s, "crypto", "crypto", "major" if b in MAJORS else "alt", False, b in MAJORS)
+        for s, b in bases
     ]
     _write_cache(cache, assets)
-    return assets
+    return assets[:n] if n else assets
 
 
 def with_benchmark(assets: list[AssetMeta], market: str, limit: int | None) -> list[AssetMeta]:

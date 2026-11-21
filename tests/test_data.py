@@ -1,8 +1,11 @@
+import io
+import zipfile
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import pytest
+import requests
 
 from swingbot import config
 from swingbot.data import binance, download, universe, yahoo
@@ -69,8 +72,27 @@ def test_yahoo_empty(monkeypatch):
     assert yahoo.fetch_yahoo("ZZZZ").empty
 
 
+class FakeText:
+    def __init__(self, text="", content=b""):
+        self.text = text
+        self.content = content
+
+    def raise_for_status(self):
+        pass
+
+
+class FakeStatus:
+    def __init__(self, code):
+        self.status_code = code
+
+
+def _no_archive(monkeypatch, symbols=()):
+    monkeypatch.setattr(universe.binance, "list_archive_symbols", lambda quote="USDT": list(symbols))
+
+
 def test_crypto_universe_filters(monkeypatch, tmp_path):
     monkeypatch.setattr(universe, "UNIVERSE_DIR", tmp_path)
+    _no_archive(monkeypatch)
     tickers = [
         {"symbol": "USDCUSDT", "quoteVolume": "9e9"},
         {"symbol": "BTCUPUSDT", "quoteVolume": "8e9"},
@@ -81,10 +103,103 @@ def test_crypto_universe_filters(monkeypatch, tmp_path):
         {"symbol": "XUSDUSDT", "quoteVolume": "3e9"},
     ]
     monkeypatch.setattr(universe.requests, "get", lambda *a, **k: FakeResp(tickers))
-    out = universe.crypto_universe(60)
+    out = universe.crypto_universe()
     assert [a.symbol for a in out] == ["BTCUSDT"]
     assert out[0].is_major and out[0].market == "crypto" and out[0].sector == "crypto"
     assert (tmp_path / "crypto.csv").exists()
+
+
+def test_list_archive_symbols_paginates(monkeypatch):
+    pages = [
+        '<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><IsTruncated>true</IsTruncated>'
+        '<NextMarker>data/spot/monthly/klines/ETHBTC/</NextMarker>'
+        '<CommonPrefixes><Prefix>data/spot/monthly/klines/BTCUSDT/</Prefix></CommonPrefixes>'
+        '<CommonPrefixes><Prefix>data/spot/monthly/klines/ETHBTC/</Prefix></CommonPrefixes></ListBucketResult>',
+        '<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><IsTruncated>false</IsTruncated>'
+        '<CommonPrefixes><Prefix>data/spot/monthly/klines/LUNAUSDT/</Prefix></CommonPrefixes></ListBucketResult>']
+    calls = []
+
+    def get(url, params=None, timeout=None, **k):
+        calls.append(params.get("marker"))
+        return FakeText(pages[len(calls) - 1])
+
+    monkeypatch.setattr(binance.requests, "get", get)
+    assert binance.list_archive_symbols() == ["BTCUSDT", "LUNAUSDT"]
+    assert calls == [None, "data/spot/monthly/klines/ETHBTC/"]
+
+
+def _zip_bytes(rows):
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("x.csv", "\n".join(",".join(str(c) for c in r) for r in rows))
+    return buf.getvalue()
+
+
+def _arow(open_time, close="1.5"):
+    return [open_time, "1.0", "2.0", "0.5", close, "10.0", open_time, "0", 0, "0", "0", "0"]
+
+
+def test_fetch_binance_archive_ms_and_us(monkeypatch):
+    ms = lambda d: int(pd.Timestamp(d).timestamp() * 1000)  # noqa: E731
+    z1 = _zip_bytes([_arow(ms("2021-01-01")), _arow(ms("2021-01-02"))])
+    z2 = _zip_bytes([_arow(ms("2025-01-01") * 1000)])  # microseconds
+    base = "data/spot/monthly/klines/LUNAUSDT/1d/"
+    keys = [base + "LUNAUSDT-1d-2021-01.zip", base + "LUNAUSDT-1d-2021-01.zip.CHECKSUM",
+            base + "LUNAUSDT-1d-2025-01.zip"]
+    zips = {binance.ARCHIVE_FILE_URL + keys[0]: z1, binance.ARCHIVE_FILE_URL + keys[2]: z2}
+    listing = ('<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><IsTruncated>false</IsTruncated>'
+               + "".join(f"<Contents><Key>{k}</Key></Contents>" for k in keys) + "</ListBucketResult>")
+
+    def get(url, params=None, timeout=None, **k):
+        if url == binance.ARCHIVE_LIST_URL:
+            assert params["prefix"] == base
+            return FakeText(listing)
+        return FakeText(content=zips[url])  # KeyError if a CHECKSUM file is requested
+
+    monkeypatch.setattr(binance.requests, "get", get)
+    df = binance.fetch_binance_archive("LUNAUSDT")
+    assert list(df.index) == list(pd.to_datetime(["2021-01-01", "2021-01-02", "2025-01-01"]))
+    assert list(df.columns) == ["open", "high", "low", "close", "volume"] and df.index.name == "date"
+    assert df["close"].dtype == float
+
+
+def test_fetch_binance_archive_empty_and_start(monkeypatch):
+    empty = '<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><IsTruncated>false</IsTruncated></ListBucketResult>'
+    monkeypatch.setattr(binance.requests, "get", lambda *a, **k: FakeText(empty))
+    df = binance.fetch_binance_archive("NOPEUSDT")
+    assert df.empty and list(df.columns) == ["open", "high", "low", "close", "volume"]
+    assert df.index.name == "date"
+
+
+def test_fetch_crypto_falls_back_on_400(monkeypatch):
+    def api(*a, **k):
+        raise requests.HTTPError(response=FakeStatus(400))
+
+    monkeypatch.setattr(binance, "fetch_binance", api)
+    monkeypatch.setattr(binance, "fetch_binance_archive", lambda s, start="2017-01-01": "ARCHIVE")
+    assert binance.fetch_crypto("LUNAUSDT") == "ARCHIVE"
+
+    def api500(*a, **k):
+        raise requests.HTTPError(response=FakeStatus(500))
+
+    monkeypatch.setattr(binance, "fetch_binance", api500)
+    with pytest.raises(requests.HTTPError):
+        binance.fetch_crypto("BTCUSDT")
+
+
+def test_crypto_universe_includes_delisted_and_excludes_fiat(monkeypatch, tmp_path):
+    monkeypatch.setattr(universe, "UNIVERSE_DIR", tmp_path)
+    monkeypatch.setattr(universe.binance, "list_archive_symbols",
+                        lambda quote="USDT": ["BTCUSDT", "LUNAUSDT", "EURUSDT", "USTUSDT", "BTCUPUSDT"])
+    monkeypatch.setattr(universe.requests, "get", lambda *a, **k: FakeResp(
+        [{"symbol": "ETHUSDT", "quoteVolume": "1"}, {"symbol": "ARBUSDT", "quoteVolume": "1"}]))
+    out = [a.symbol for a in universe.crypto_universe()]
+    assert out == ["BTCUSDT", "ETHUSDT", "ARBUSDT", "LUNAUSDT"]
+
+
+def test_default_fetch_crypto_uses_fetch_crypto(monkeypatch):
+    monkeypatch.setattr(download, "fetch_crypto", lambda s: "X" + s)
+    assert download.default_fetch(AssetMeta("LUNAUSDT", "crypto", "crypto", "alt", False, False)) == "XLUNAUSDT"
 
 
 def _bars(dates, **over):
@@ -223,21 +338,21 @@ def _tick(sym, qv):
 def test_crypto_universe_exclusions_and_order(monkeypatch, tmp_path):
     monkeypatch.setattr(universe, "UNIVERSE_DIR", tmp_path)
     bad = ["USD1", "RLUSD", "XUSD", "RWUSD", "U", "WBTC", "PAXG", "XAUT", "NVDAB", "TQQQB", "QQQB",
-           "MUB", "牛来", "ETHDOWN", "BNBBULL"]
-    listed = {"ETH", "BNB", "BTC", "SOL", "YB"}
-    good = [("ETHUSDT", 50), ("BTCUSDT", 10), ("BNBUSDT", 30), ("YBUSDT", 20), ("SOLUSDT", 40)]
-    tickers = [_tick(b + "USDT", 1e12) for b in bad] + [_tick(s, v) for s, v in good]
-    assert listed
+           "MUB", "牛来", "ETHDOWN", "BNBBULL", "GBP", "TRY", "BRL", "PAX", "UST", "VAI", "AEUR"]
+    good = ["SOLUSDT", "ETHUSDT", "BNBUSDT", "YBUSDT", "BTCUSDT"]
+    tickers = [_tick(b + "USDT", 1e12) for b in bad] + [_tick(s, 1) for s in good]
     tickers += [_tick("ETHBTC", 1e12), _tick("BTCEUR", 1e12), _tick("BTCUSDC", 1e12)]
+    _no_archive(monkeypatch)
     monkeypatch.setattr(universe.requests, "get", lambda *a, **k: FakeResp(tickers))
-    out = universe.crypto_universe(60)
-    assert [a.symbol for a in out] == ["ETHUSDT", "SOLUSDT", "BNBUSDT", "YBUSDT", "BTCUSDT"]
-    assert [a.is_major for a in out] == [True, False, False, False, True]
-    assert [a.cap_bucket for a in out] == ["major", "alt", "alt", "alt", "major"]
+    out = universe.crypto_universe()
+    assert [a.symbol for a in out] == ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "YBUSDT"]
+    assert [a.is_major for a in out] == [True, True, False, False, False]
+    assert [a.cap_bucket for a in out] == ["major", "major", "alt", "alt", "alt"]
 
 
-def test_crypto_universe_top_n_and_cache(monkeypatch, tmp_path):
+def test_crypto_universe_n_and_cache(monkeypatch, tmp_path):
     monkeypatch.setattr(universe, "UNIVERSE_DIR", tmp_path)
+    _no_archive(monkeypatch)
     tickers = [_tick(f"C{i}USDT", i) for i in range(1, 11)]
     calls = []
 
@@ -247,10 +362,11 @@ def test_crypto_universe_top_n_and_cache(monkeypatch, tmp_path):
 
     monkeypatch.setattr(universe.requests, "get", fake_get)
     out = universe.crypto_universe(3)
-    assert [a.symbol for a in out] == ["C10USDT", "C9USDT", "C8USDT"]
+    assert [a.symbol for a in out] == ["C10USDT", "C1USDT", "C2USDT"]
     again = universe.crypto_universe(3)
     assert again == out and len(calls) == 1  # cache reused, no second request
-    assert [a.symbol for a in universe.crypto_universe(2)] == ["C10USDT", "C9USDT"]
+    assert len(universe.crypto_universe()) == 10
+    assert [a.symbol for a in universe.crypto_universe(2)] == ["C10USDT", "C1USDT"]
 
 
 def test_committed_crypto_cache_is_clean():
@@ -267,9 +383,10 @@ def test_real_coins_ending_in_b_up_down_kept(monkeypatch, tmp_path):
     t = [_tick(s + "USDT", v) for s, v in [("ARB", 9), ("SHIB", 8), ("BNB", 7), ("TRB", 6), ("JUP", 5),
                                            ("SYRUP", 4), ("BTC", 3), ("BTCUP", 2), ("BTCDOWN", 1),
                                            ("NVDAB", 99), ("TQQQB", 98)]]
+    _no_archive(monkeypatch)
     monkeypatch.setattr(universe.requests, "get", lambda *a, **k: FakeResp(t))
-    got = [a.symbol for a in universe.crypto_universe(60)]
-    assert got == ["ARBUSDT", "SHIBUSDT", "BNBUSDT", "TRBUSDT", "JUPUSDT", "SYRUPUSDT", "BTCUSDT"]
+    got = [a.symbol for a in universe.crypto_universe()]
+    assert got == ["BTCUSDT", "ARBUSDT", "BNBUSDT", "JUPUSDT", "SHIBUSDT", "SYRUPUSDT", "TRBUSDT"]
 
 
 def test_yahoo_ticker():

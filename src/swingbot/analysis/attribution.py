@@ -302,3 +302,76 @@ def oos_metrics(pred: pd.DataFrame, horizon: int) -> pd.DataFrame:
     out = pd.DataFrame(rows, columns=OOS_COLS)
     out["fold"] = out["fold"].astype(object)
     return out
+
+
+# ---- SHAP attribution ----
+SHAP_SUMMARY_COLS = ["feature", "kind", "mean_abs_shap", "mean_shap_when_on", "n_on", "rank"]
+SHAP_PAIR_COLS = ["a", "b", "mean_abs_interaction", "mean_interaction_when_both", "n_both"]
+
+
+def _shap_sample(X: pd.DataFrame, rows: int) -> pd.DataFrame:
+    """Random rows (numpy default_rng(0), no replacement, original order kept) when ``len(X) > rows``."""
+    if len(X) <= rows:
+        return X
+    pos = np.sort(np.random.default_rng(0).choice(len(X), size=rows, replace=False))
+    return X.iloc[pos]
+
+
+def _explainer(model):
+    import shap
+    # no background dataset: tree_path_dependent, fast and deterministic
+    return shap.TreeExplainer(model)
+
+
+def shap_summary(model, X: pd.DataFrame, signal_info=None) -> pd.DataFrame:
+    """Per-feature SHAP importance on a ``config.SHAP_ROWS`` sample of ``X`` (seed 0).
+
+    Columns: feature, kind ("signal" if in ``signal_info`` else "regime"),
+    mean_abs_shap, mean_shap_when_on (mean SHAP over rows where the feature is 1;
+    NaN when ``n_on == 0``), n_on (within the sample), rank (1 = largest mean_abs_shap).
+    """
+    info = _info(signal_info)
+    Xs = _shap_sample(X, config.SHAP_ROWS)
+    phi = np.asarray(_explainer(model).shap_values(Xs), dtype="float64")
+    on = Xs.to_numpy() == 1
+    n_on = on.sum(axis=0)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        when_on = np.where(n_on > 0, (phi * on).sum(axis=0) / np.maximum(n_on, 1), np.nan)
+    out = pd.DataFrame({"feature": list(X.columns),
+                        "kind": ["signal" if c in info else "regime" for c in X.columns],
+                        "mean_abs_shap": np.abs(phi).mean(axis=0) if len(Xs) else np.zeros(X.shape[1]),
+                        "mean_shap_when_on": when_on, "n_on": n_on.astype(int)})
+    out = out.sort_values("mean_abs_shap", ascending=False, kind="stable").reset_index(drop=True)
+    out["rank"] = np.arange(1, len(out) + 1)
+    return out[SHAP_SUMMARY_COLS]
+
+
+def shap_pair_interactions(model, X: pd.DataFrame, signal_info=None, top: int = 30) -> pd.DataFrame:
+    """Top same-direction signal x signal SHAP interactions on a ``config.SHAP_INTERACTION_ROWS`` sample.
+
+    Pairs (a, b) follow ``signal_info`` order (a before b) and share a direction.
+    ``mean_abs_interaction`` and ``mean_interaction_when_both`` use the raw
+    off-diagonal entry ``phi[:, i, j]`` as returned by shap, which is one symmetric
+    half of the pair's interaction (phi[i, j] == phi[j, i]); it is NOT doubled.
+    ``mean_interaction_when_both`` is NaN when ``n_both == 0`` (rows where both are 1).
+    Sorted by ``mean_abs_interaction`` descending, cut to ``top``.
+    """
+    info = _info(signal_info)
+    sigs = [c for c in X.columns if c in info]
+    pairs = [(a, b) for i, a in enumerate(sigs) for b in sigs[i + 1:] if info[a][1] == info[b][1]]
+    Xs = _shap_sample(X, config.SHAP_INTERACTION_ROWS)
+    if not pairs:
+        return pd.DataFrame({c: pd.Series(dtype=object) for c in SHAP_PAIR_COLS})
+    phi = np.asarray(_explainer(model).shap_interaction_values(Xs), dtype="float64")
+    idx = {c: i for i, c in enumerate(X.columns)}
+    arr = Xs.to_numpy() == 1
+    rows = []
+    for a, b in pairs:
+        v = phi[:, idx[a], idx[b]]
+        both = arr[:, idx[a]] & arr[:, idx[b]]
+        n_both = int(both.sum())
+        rows.append((a, b, float(np.abs(v).mean()) if len(v) else 0.0,
+                     float(v[both].mean()) if n_both else np.nan, n_both))
+    out = pd.DataFrame(rows, columns=SHAP_PAIR_COLS)
+    out = out.sort_values("mean_abs_interaction", ascending=False, kind="stable")
+    return out.head(top).reset_index(drop=True)

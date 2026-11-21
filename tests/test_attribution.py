@@ -235,3 +235,57 @@ def test_oos_on_walk_forward_output():
     m = oos_metrics(out, horizon=10)
     assert list(m.fold) == [2013, 2014, 2015, "all"]
     assert m.loc[m.fold == "all", "ic_mean"].iloc[0] > 0
+
+
+# ---- Task 3: SHAP attribution ----
+from swingbot.analysis.attribution import shap_pair_interactions, shap_summary  # noqa: E402
+
+
+@pytest.fixture
+def small_shap(monkeypatch):
+    monkeypatch.setattr(config, "SHAP_ROWS", 3000)
+    monkeypatch.setattr(config, "SHAP_INTERACTION_ROWS", 1500)
+
+
+def _fit(p, info):
+    X = feature_matrix(p, signal_info=info)
+    return fit_model(X, p["excess_long_10"].to_numpy()), X
+
+
+def test_shap_ranks_planted_signal_first(small_shap):
+    p = synth_ml(plant=0.03)
+    model, X = _fit(p, INFO)
+    s = shap_summary(model, X, signal_info=INFO)
+    assert list(s.columns) == ["feature", "kind", "mean_abs_shap", "mean_shap_when_on", "n_on", "rank"]
+    assert len(s) == X.shape[1] and list(s["rank"]) == list(range(1, len(s) + 1))
+    assert s["mean_abs_shap"].is_monotonic_decreasing
+    top = s.iloc[0]
+    assert top.feature == "A" and top.kind == "signal" and top.mean_shap_when_on > 0
+    assert set(s.loc[s.feature.str.contains("="), "kind"]) == {"regime"}
+
+
+def test_shap_interaction_finds_planted_pair(small_shap):
+    info = {**INFO, "C": ("trend", "long")}
+    p = synth_ml(plant=0.0)
+    p["C"] = np.random.default_rng(5).random(len(p)) < 0.2
+    p.loc[p["A"] & p["B"], "excess_long_10"] += 0.04
+    model, X = _fit(p, info)
+    t = shap_pair_interactions(model, X, signal_info=info)
+    assert list(t.columns) == ["a", "b", "mean_abs_interaction", "mean_interaction_when_both", "n_both"]
+    assert (t.a.iloc[0], t.b.iloc[0]) == ("A", "B") and t.mean_interaction_when_both.iloc[0] > 0
+    assert not t[["a", "b"]].isin(["S"]).any().any()                 # opposite direction excluded
+    assert t["mean_abs_interaction"].is_monotonic_decreasing
+    assert len(shap_pair_interactions(model, X, signal_info=info, top=1)) == 1
+
+
+def test_never_firing_signal_no_crash(small_shap):
+    info = {**INFO, "Z": ("trend", "long")}
+    p = synth_ml(300, 30)
+    p["Z"] = False
+    model, X = _fit(p, info)
+    s = shap_summary(model, X, signal_info=info)
+    z = s[s.feature == "Z"].iloc[0]
+    assert z.n_on == 0 and np.isnan(z.mean_shap_when_on)
+    t = shap_pair_interactions(model, X, signal_info=info)
+    zr = t[(t.a == "Z") | (t.b == "Z")]
+    assert (zr.n_both == 0).all() and zr.mean_interaction_when_both.isna().all()

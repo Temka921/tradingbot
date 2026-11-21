@@ -23,6 +23,7 @@ MAX_SKIP_FRAC = 0.02      # build_panel raises if more assets than this fail wit
 ELIGIBLE_TOP_N: dict[str, int] = {"crypto": 100}  # market -> top-N by trailing dollar volume
 LIQUIDITY_WINDOW = 30        # trailing days for the median dollar volume
 REDUNDANT_JACCARD = 0.5      # pair verdict "redundant": not significant and Jaccard overlap >= this
+MAX_TRIPLES = 500            # triple_table evaluates at most this many candidate triples
 BENCHMARK: dict[str, str] = {"stock": "SPY", "crypto": "BTCUSDT"}
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]

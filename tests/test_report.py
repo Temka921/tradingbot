@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 
 from swingbot.analysis.solo import solo_table
-from swingbot.report.build import CAVEAT, CDN_URL, build_report, heatmap_matrix
+from swingbot.report.build import CAVEAT, CDN_URL, SUSPECT_LABEL, build_report, heatmap_matrix
 from swingbot.signals import SIGNAL_INFO
 
 
@@ -49,7 +49,8 @@ def test_report_renders(tmp_path):
 def test_report_insufficient_blank():
     panel = make_market_panel("stock")
     rare = list(SIGNAL_INFO)[0]
-    tbl = solo_table(panel, horizon=10, group_by=["market", "trend_regime"])
+    panel["view"] = pd.Categorical(["stock"] * len(panel))
+    tbl = solo_table(panel, horizon=10, group_by=["view", "trend_regime"])
     assert tbl[tbl.signal == rare]["insufficient"].all()
     m = heatmap_matrix(tbl, "trend_regime")
     assert m.loc[rare].isna().all()                      # blank, no number
@@ -142,7 +143,7 @@ def test_formatting_bps_and_profit_factor():
 def test_csv_names(tmp_path):
     _render(tmp_path)
     names = {f.name for f in tmp_path.glob("*.csv")}
-    exp = {f"solo_{n}_{m}_2026-01-01.csv" for m in ("stock", "crypto")
+    exp = {f"solo_{n}_{m}_2026-01-01.csv" for m in ("stock", "crypto")  # no etf rows: no etf view
            for n in ("leaderboard", "heatmap_trend", "heatmap_vol", "segment")}
     assert names == exp
 
@@ -204,21 +205,60 @@ def _etf_panel(seed=1):
     return p
 
 
-def test_etf_excluded_and_control_table(tmp_path):
+def test_etf_is_a_view_not_a_control(tmp_path):
     p = _etf_panel()
     html = build_report({"stock": p}, tmp_path / "r.html", as_of="2026-01-01").read_text(encoding="utf-8")
     sig = list(SIGNAL_INFO)[1]
     exp_stock = int((p[sig] & ~p["is_etf"]).sum())
     exp_etf = int((p[sig] & p["is_etf"]).sum())
     lb = pd.read_csv(tmp_path / "solo_leaderboard_stock_2026-01-01.csv").set_index("signal")
-    etf = pd.read_csv(tmp_path / "solo_etf_control_stock_2026-01-01.csv").set_index("signal")
+    etf = pd.read_csv(tmp_path / "solo_leaderboard_etf_2026-01-01.csv").set_index("signal")
     assert lb.loc[sig, "n_all"] == exp_stock
     assert etf.loc[sig, "n_all"] == exp_etf
     assert "verdict" in etf.columns
-    for name in ("heatmap_trend", "heatmap_vol", "segment"):
-        t = pd.read_csv(tmp_path / f"solo_{name}_stock_2026-01-01.csv")
-        assert t.loc[t.signal == sig, "n_all"].sum() == exp_stock
-    assert "ETF-only control" in html and "no constituent survivorship" in html
+    for v, exp in (("stock", exp_stock), ("etf", exp_etf)):
+        for name in ("heatmap_trend", "heatmap_vol", "segment"):
+            t = pd.read_csv(tmp_path / f"solo_{name}_{v}_2026-01-01.csv")
+            assert t.loc[t.signal == sig, "n_all"].sum() == exp
+    assert not list(tmp_path.glob("solo_etf_control_*"))
+    assert "ETF-only control" not in html and "no constituent survivorship" not in html
+
+
+def test_report_views_and_suspect_label(tmp_path):
+    stock = make_market_panel("stock", assets=("SPY", "QQQ", "AAA", "BBB"), seed=1)
+    stock["is_etf"] = stock["asset"].isin(["SPY", "QQQ"])
+    panels = {"stock": stock, "crypto": make_market_panel("crypto", seed=2)}
+    html = build_report(panels, tmp_path / "r.html", horizon=10).read_text(encoding="utf-8")
+    assert SUSPECT_LABEL in html
+    assert html.index("etf") < html.index(SUSPECT_LABEL)
+    assert "etf | " in html and "stock | " in html and "crypto | " in html     # heatmap columns
+    assert list(tmp_path.glob("solo_leaderboard_etf_*.csv"))
+    # suspect label sits on the stock heading only
+    assert html.count(SUSPECT_LABEL) == 1
+    i = html.index(SUSPECT_LABEL)
+    assert html.rfind("<h3>", 0, i) > html.rfind("</h3>", 0, i)
+
+
+def test_caveat_no_longer_claims_delisted_coins_missing():
+    assert "delisted coins are missing" not in CAVEAT
+    assert "0.10%" in CAVEAT and "0.30%" in CAVEAT and "q ≥ 0.10" in CAVEAT
+
+
+def test_eligible_false_rows_never_reach_statistics(tmp_path):
+    p = make_market_panel("crypto", assets=("BTCUSDT", "XUSDT"), seed=3)
+    p["eligible"] = p["asset"] == "BTCUSDT"
+    build_report({"crypto": p}, tmp_path / "r.html", as_of="2026-01-01")
+    sig = list(SIGNAL_INFO)[1]
+    lb = pd.read_csv(tmp_path / "solo_leaderboard_crypto_2026-01-01.csv").set_index("signal")
+    assert lb.loc[sig, "n_all"] == int((p[sig] & (p["asset"] == "BTCUSDT")).sum())
+
+
+def test_view_with_no_rows_for_signal_does_not_crash(tmp_path):
+    p = make_market_panel("crypto", assets=("BTCUSDT", "XUSDT"), seed=3)
+    p["eligible"] = False
+    p.loc[p.index < 20, "eligible"] = True   # almost nothing eligible
+    out = build_report({"crypto": p}, tmp_path / "r.html", as_of="2026-01-01")
+    assert out.exists()
 
 
 def test_survivorship_caveat_number(tmp_path):
@@ -236,7 +276,9 @@ def test_survivorship_caveat_number(tmp_path):
     i_cav, i_surv, i_extra = html.index(CAVEAT), html.index(txt), html.index(CAVEAT_EXTRA)
     assert i_cav < i_surv < i_extra
     assert "S&amp;P 500/400 constituents" in html and "dip-buying" in html
-    assert "top" in html and "selection on later success" in html
+    assert "delisted Binance pairs" in html and "last close" in html and "point-in-time" in html
+    assert "closed funds are missing" in html
+    assert "selection on later success" not in html
 
 
 def _plotly_traces(html: str) -> list[list[dict]]:
@@ -259,7 +301,7 @@ def test_heatmap_grey_for_not_significant(tmp_path):
     p.loc[p[strong], col] += 0.03
     html = build_report({"stock": p}, tmp_path / "r.html", as_of="2026-01-01").read_text(encoding="utf-8")
     assert ("Blue = signal beats same-day average, red = trails; grey = not significant (q ≥ 0.10); "
-            "blank = insufficient data. BH correction is per market within each heatmap.") in html
+            "blank = insufficient data. BH correction is per view within each heatmap.") in html
     figs = _plotly_traces(html)
     assert len(figs) == 2
     for traces in figs:

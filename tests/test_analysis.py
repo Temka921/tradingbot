@@ -391,3 +391,43 @@ def test_insufficient_when_dates_below_test_minimum():
     r20 = solo_table(p, horizon=20, group_by=["market"], signal_info=info).iloc[0]
     assert np.isfinite(r10["p"]) and not r10["insufficient"]
     assert np.isnan(r20["p"]) and r20["insufficient"]
+
+
+# ---------- universe views (option C) ----------
+def test_universe_views_split_and_eligible():
+    from swingbot.analysis.views import universe_views
+    from tests.test_report import make_market_panel
+    stock = make_market_panel("stock", assets=("SPY", "AAA"))
+    stock["is_etf"] = stock["asset"] == "SPY"
+    crypto = make_market_panel("crypto", assets=("BTCUSDT", "XUSDT"))
+    crypto["eligible"] = crypto["asset"] == "BTCUSDT"
+    v = universe_views({"stock": stock, "crypto": crypto})
+    assert list(v) == ["etf", "crypto", "stock"]
+    assert set(v["etf"]["asset"]) == {"SPY"} and set(v["stock"]["asset"]) == {"AAA"}
+    assert set(v["crypto"]["asset"]) == {"BTCUSDT"}
+    assert (v["etf"]["view"] == "etf").all()
+    assert str(v["etf"]["view"].dtype) == "category"
+
+
+def test_universe_views_missing_columns_and_empty_views():
+    from swingbot.analysis.views import universe_views
+    from tests.test_report import make_market_panel
+    v = universe_views({"stock": make_market_panel("stock")})   # no is_etf, no eligible
+    assert list(v) == ["stock"] and len(v["stock"]) == 900
+
+
+def test_universe_views_rejects_wrong_market():
+    import pytest
+    from swingbot.analysis.views import universe_views
+    from tests.test_report import make_market_panel
+    with pytest.raises(ValueError, match="only that market"):
+        universe_views({"stock": make_market_panel("crypto")})
+
+
+def test_universe_views_does_not_filter_on_delisted():
+    from swingbot.analysis.views import universe_views
+    from tests.test_report import make_market_panel
+    c = make_market_panel("crypto", assets=("A", "B"))
+    c["delisted"] = c["asset"] == "B"
+    v = universe_views({"crypto": c})
+    assert set(v["crypto"]["asset"]) == {"A", "B"} and "delisted" in v["crypto"]

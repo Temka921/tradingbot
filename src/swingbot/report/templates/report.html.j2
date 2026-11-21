@@ -25,45 +25,37 @@
 <div class="how"><strong>How to read this.</strong>
 <ul>
 <li><b>Excess</b>: return from the next day's open over {{ horizon }} days, minus costs, minus the benchmark (SPY for stocks, BTC for crypto). Shown in bps (1 bp = 0.01%).</li>
-<li><b>Edge</b>: the signal's average excess minus the average of all assets in the same market on the same days. This is what the p-value tests. Edge and its p/q are relative and cost-neutral: both sides pay the same cost, so costs cancel. A significant edge can still lose money after costs, and a significant negative edge is a reason to avoid the signal, not a finding in its favour.</li>
+<li><b>Edge</b>: the signal's average excess minus the average of all assets in the same view on the same days. This is what the p-value tests. Edge and its p/q are relative and cost-neutral: both sides pay the same cost, so costs cancel. A significant edge can still lose money after costs, and a significant negative edge is a reason to avoid the signal, not a finding in its favour.</li>
 <li><b>q</b>: p-value corrected for running many tests at once (Benjamini-Hochberg), within one table. Below 0.10 is the minimum bar, not proof.</li>
 <li><b>Verdict</b>: <i>candidate</i> = sufficient, q &lt; 0.10, edge &gt; 0 <b>and</b> mean excess net of costs &gt; 0. <i>Significant negative edge (avoid)</i> = q &lt; 0.10 with edge &lt; 0. <i>Beats same-day avg but loses net of costs</i> = q &lt; 0.10, edge &gt; 0, mean excess net of costs &le; 0. Only candidates are worth a second look, and even they are not proof.</li>
 <li><b>Insufficient</b>: too few occurrences or distinct dates to test. Greyed or blank; never a winner.</li>
 </ul></div>
 
 <h2>1. Data coverage</h2>
-<p>Assets and rows exclude ETFs (counted separately). Quality issues = distinct assets with at least one flagged data issue. Clip bounds: before any statistic, each outcome is clipped at the 0.1 and 99.9 percentiles pooled over that market's discovery rows (signal rows and baseline alike), so one bad data splice cannot dominate a day's mean.</p>
-<div class="scroll"><table><tr><th>Market</th><th>Assets (ex-ETF)</th><th>ETFs</th><th>Rows (ex-ETF)</th><th>Discovery rows</th><th>First date</th><th>Last date</th><th>Quality issues</th><th>Clip bounds ({{ horizon }}-day outcome)</th></tr>
-{% for c in coverage %}<tr><td>{{ c.market }}</td><td>{{ c.assets }}</td><td>{{ c.etfs }}</td><td>{{ c.rows }}</td><td>{{ c.disc_rows }}</td><td>{{ c.start }}</td><td>{{ c.end }}</td><td>{{ c.issues }}</td><td>{{ c.clip }}</td></tr>
+<p>Views: ETFs and crypto are the primary results; single stocks are suspect (survivorship). Rows exclude points not in the view's eligible universe (crypto: point-in-time top-100 liquidity). Quality issues = distinct assets with at least one flagged data issue. Clip bounds: before any statistic, each outcome is clipped at the 0.1 and 99.9 percentiles pooled over that view's discovery rows (signal rows and baseline alike), so one bad data splice cannot dominate a day's mean.</p>
+<div class="scroll"><table><tr><th>View</th><th>Assets</th><th>Rows</th><th>Discovery rows</th><th>First date</th><th>Last date</th><th>Quality issues</th><th>Clip bounds ({{ horizon }}-day outcome)</th></tr>
+{% for c in coverage %}<tr><td>{{ c.view }}</td><td>{{ c.assets }}</td><td>{{ c.rows }}</td><td>{{ c.disc_rows }}</td><td>{{ c.start }}</td><td>{{ c.end }}</td><td>{{ c.issues }}</td><td>{{ c.clip }}</td></tr>
 {% endfor %}</table></div>
 
-<h2>2. Signal leaderboard (all firings) per market</h2>
+<h2>2. Signal leaderboard (all firings) per view</h2>
 <p>Statistics use every firing of the signal (n). "n solo" and "Mean excess solo" cover only firings where no signal of another family fired; no separate test is run on them. Sorted by verdict (candidate, avoid, loses net of costs, not significant, insufficient), then q ascending, then edge descending. Grey rows are insufficient.</p>
 {% for l in leaders %}
-<h3>{{ l.market }}: {% for v, n in l.counts.items() %}{{ v }}: {{ n }}{% if not loop.last %} · {% endif %}{% endfor %}</h3>
+<h3>{{ l.view }}{% if l.suspect %} ({{ suspect_label|safe }}){% endif %}: {% for v, n in l.counts.items() %}{{ v }}: {{ n }}{% if not loop.last %} · {% endif %}{% endfor %}</h3>
 <div class="scroll"><table><tr>{% for h in headers %}<th>{{ h }}</th>{% endfor %}</tr>
 {% for r in l.rows %}<tr{% if r.insufficient %} class="insuf"{% endif %}>{% for c in r.cells %}<td>{{ c }}</td>{% endfor %}</tr>
 {% endfor %}</table></div>
 {% endfor %}
 <p class="note">Note: {{ dup_note|safe }}</p>
 
-{% for l in controls %}
-<h3>ETF-only control ({{ l.market }}, {{ l.assets }} ETFs): {% for v, n in l.counts.items() %}{{ v }}: {{ n }}{% if not loop.last %} · {% endif %}{% endfor %}</h3>
-<p>{{ etf_note }}</p>
-<div class="scroll"><table><tr>{% for h in headers %}<th>{{ h }}</th>{% endfor %}</tr>
-{% for r in l.rows %}<tr{% if r.insufficient %} class="insuf"{% endif %}>{% for c in r.cells %}<td>{{ c }}</td>{% endfor %}</tr>
-{% endfor %}</table></div>
-{% endfor %}
-
 <h2>3. Heatmaps: edge vs same-day average (bps)</h2>
-<p>Blue = signal beats same-day average, red = trails; grey = not significant (q ≥ 0.10); blank = insufficient data. BH correction is per market within each heatmap. Cell colour is the edge tested by p/q, not the raw mean; hover shows n, dates, edge, mean excess, t and q.</p>
+<p>Blue = signal beats same-day average, red = trails; grey = not significant (q ≥ 0.10); blank = insufficient data. BH correction is per view within each heatmap. Cell colour is the edge tested by p/q, not the raw mean; hover shows n, dates, edge, mean excess, t and q.</p>
 <div class="plot">{{ heat_trend|safe }}</div>
 <div class="plot">{{ heat_vol|safe }}</div>
 
 <h2>4. Segment tables</h2>
 <p>Insufficient slices show counts only; statistics are blank.</p>
 {% for s in segments %}
-<h3>{{ s.market }}</h3>
+<h3>{{ s.view }}</h3>
 <div class="scroll"><table><tr>{% for h in s.headers %}<th>{{ h }}</th>{% endfor %}</tr>
 {% for r in s.rows %}<tr{% if r.insufficient %} class="insuf"{% endif %}>{% for c in r.cells %}<td>{{ c }}</td>{% endfor %}</tr>
 {% endfor %}</table></div>

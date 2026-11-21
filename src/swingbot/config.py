@@ -20,6 +20,8 @@ MIN_N_SLICE = 30
 DELIST_GAP_DAYS = 7          # last date this many days before the market's last date -> delisted
 RELIST_GAP_DAYS = 5          # crypto: a gap longer than this splits a symbol into separate assets
 MAX_SKIP_FRAC = 0.02      # build_panel raises if more assets than this fail with an error
+ELIGIBLE_TOP_N: dict[str, int] = {"crypto": 100}  # market -> top-N by trailing dollar volume
+LIQUIDITY_WINDOW = 30        # trailing days for the median dollar volume
 BENCHMARK: dict[str, str] = {"stock": "SPY", "crypto": "BTCUSDT"}
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]

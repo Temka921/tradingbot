@@ -4,6 +4,7 @@ import pytest
 
 from swingbot import config, panel
 from swingbot.data import store
+from swingbot import regimes
 from swingbot.regimes import label_regimes
 from swingbot.signals import REGISTRY
 
@@ -322,3 +323,59 @@ def test_panel_relisted_symbol_becomes_two_assets(capsys):
     assert (out[out.asset == "LUNAUSDT@2020-01-01"]["is_major"] == False).all()  # same meta row
     first = out[out.asset == "LUNAUSDT@2020-01-01"]
     assert not np.isnan(first.iloc[-3]["gross_10"])      # dead segment exits at its last close
+
+
+def test_liquidity_eligible_ranks_and_warmup():
+    d = pd.date_range("2020-01-01", periods=40, freq="D")
+    closes = pd.DataFrame({"A": 1.0, "B": 1.0, "C": 1.0}, index=d)
+    vols = pd.DataFrame({"A": 300.0, "B": 200.0, "C": 100.0}, index=d)
+    e = regimes.liquidity_eligible(closes, vols, top_n=2, window=30)
+    assert not e.iloc[:29].any().any()                 # warm-up: never eligible
+    assert e.iloc[29:]["A"].all() and e.iloc[29:]["B"].all() and not e.iloc[29:]["C"].any()
+
+
+def test_liquidity_eligible_no_lookahead():
+    rng = np.random.default_rng(0)
+    d = pd.date_range("2020-01-01", periods=120, freq="D")
+    closes = pd.DataFrame(rng.uniform(1, 2, (120, 5)), index=d, columns=list("ABCDE"))
+    vols = pd.DataFrame(rng.uniform(1, 1000, (120, 5)), index=d, columns=list("ABCDE"))
+    full = regimes.liquidity_eligible(closes, vols, top_n=2, window=30)
+    cut = regimes.liquidity_eligible(closes.iloc[:80], vols.iloc[:80], top_n=2, window=30)
+    pd.testing.assert_frame_equal(full.iloc[:80], cut)
+
+
+def test_liquidity_eligible_own_calendar_and_missing_dates():
+    # B has no bars on the first 10 dates; its window must count its own bars only.
+    d = pd.date_range("2020-01-01", periods=45, freq="D")
+    closes = pd.DataFrame({"A": 1.0, "B": 1.0}, index=d)
+    vols = pd.DataFrame({"A": 100.0, "B": 200.0}, index=d)
+    closes.loc[d[:10], "B"] = np.nan
+    vols.loc[d[:10], "B"] = np.nan
+    closes.loc[d[35], "B"] = np.nan                    # a hole after warm-up
+    vols.loc[d[35], "B"] = np.nan
+    e = regimes.liquidity_eligible(closes, vols, top_n=1, window=30)
+    assert e.dtypes.eq(bool).all()
+    assert not e["B"].iloc[:39].any()                  # own warm-up: 30 own bars from date 10
+    assert not e["B"].iloc[35]                         # no bar that day -> False
+    assert e["A"].iloc[35]                             # A takes the slot B leaves empty
+
+
+def test_panel_eligible_column(monkeypatch):
+    monkeypatch.setattr(config, "ELIGIBLE_TOP_N", {"crypto": 2})
+    for i, (sym, dv) in enumerate((("BTCUSDT", 3e6), ("AUSDT", 2e6), ("CUSDT", 1e6))):
+        df = rand_bars(100, seed=i, start="2020-01-01", freq="D")
+        df["volume"] = dv / df["close"]                # dollar volume is exactly dv
+        store.save_bars(sym, "crypto", df)
+    _meta([("BTCUSDT", "crypto", "crypto", "major", False, True),
+           ("AUSDT", "crypto", "crypto", "alt", False, False),
+           ("CUSDT", "crypto", "crypto", "alt", False, False)])
+    out = panel.build_panel("crypto")
+    assert out["eligible"].dtype == bool
+    assert out.loc[out.asset == "CUSDT", "eligible"].sum() == 0
+    assert out.loc[out.asset == "BTCUSDT", "eligible"].iloc[40:].all()
+    assert out.loc[out.asset == "AUSDT", "eligible"].iloc[40:].all()
+    assert not out.loc[out.asset == "BTCUSDT", "eligible"].iloc[:29].any()  # warm-up
+    # stock panels: eligible is all True
+    _stock_setup()
+    stock = panel.build_panel("stock")
+    assert stock["eligible"].dtype == bool and stock["eligible"].all()

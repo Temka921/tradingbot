@@ -5,7 +5,7 @@ from swingbot import config
 from swingbot.data import store
 from swingbot.data.universe import excluded_crypto_base
 from swingbot.outcomes import compute_outcomes
-from swingbot.regimes import label_regimes
+from swingbot.regimes import label_regimes, liquidity_eligible
 from swingbot.signals import compute_signals, cross_sectional_signals
 
 META_COLS = ["sector", "cap_bucket", "is_etf", "is_major"]
@@ -92,6 +92,12 @@ def build_panel(market: str, allow_holdout: bool = False,
 
     closes = pd.DataFrame({s: d["close"] for s, d in bars.items()})
     xs = cross_sectional_signals(closes)  # once per market, this market's closes only
+    top_n = config.ELIGIBLE_TOP_N.get(market)
+    elig = None
+    if top_n is not None:
+        volumes = pd.DataFrame({s: d["volume"] for s, d in bars.items()})
+        elig = liquidity_eligible(closes, volumes, top_n)
+        del volumes
     del closes
 
     parts = []
@@ -105,6 +111,8 @@ def build_panel(market: str, allow_holdout: bool = False,
                 sig[sig_name] = frame[name].reindex(df.index, fill_value=False).astype(bool)
             part = pd.concat([sig, compute_outcomes(df, bench, market, delisted.get(name, False)), label_regimes(df, bench)], axis=1)
             part.insert(0, "asset", name)
+            part["eligible"] = (True if elig is None
+                                else elig[name].reindex(df.index, fill_value=False).astype(bool).to_numpy())
             part["delisted"] = delisted.get(name, False)
             for col in META_COLS:
                 part[col] = getattr(r, col)

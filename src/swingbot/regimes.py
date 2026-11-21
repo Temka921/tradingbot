@@ -3,6 +3,7 @@ import numpy as np
 import pandas as pd
 from numpy.lib.stride_tricks import sliding_window_view
 
+from swingbot import config
 from swingbot.indicators import adx, atr, sma
 
 VOL_WINDOW = 504
@@ -49,3 +50,21 @@ def label_regimes(df: pd.DataFrame, bench: pd.DataFrame) -> pd.DataFrame:
     adx_lab = np.where(a > 25, "trending", np.where(a < 20, "ranging", "neutral"))
     out["adx_regime"] = pd.Series(adx_lab, index=df.index).where(a.notna(), "unknown")
     return out
+
+
+def liquidity_eligible(closes: pd.DataFrame, volumes: pd.DataFrame, top_n: int,
+                       window: int = config.LIQUIDITY_WINDOW) -> pd.DataFrame:
+    """Point-in-time top-``top_n`` liquidity flag (dates x assets, bool).
+
+    Dollar volume = close x volume; trailing ``window``-day median (``min_periods=window``)
+    is taken on each asset's own bars, then aligned to the union of dates. Per date, assets
+    rank descending (``method="first"``); eligible when rank <= ``top_n``. Missing -> False.
+    Uses data up to the close of t only.
+    """
+    dv = closes * volumes
+    med = pd.DataFrame(index=dv.index, columns=dv.columns, dtype=float)
+    for col in dv.columns:
+        own = dv[col].dropna()
+        med[col] = own.rolling(window, min_periods=window).median().reindex(dv.index)
+    rank = med.rank(axis=1, ascending=False, method="first")
+    return (rank <= top_n).astype(bool)

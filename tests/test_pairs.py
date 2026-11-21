@@ -2,8 +2,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from swingbot.analysis.pairs import (PAIR_COLS, PAIR_VERDICTS, build_context, group_stats,
-                                     pair_table)
+from swingbot.analysis.pairs import (PAIR_COLS, PAIR_VERDICTS, add_pair_verdicts, build_context,
+                                     group_stats, pair_table)
 from swingbot.analysis.stats import TestResult, diff_test
 
 INFO = {"A": ("meanrev", "long"), "B": ("trend", "long"), "S": ("trend", "short")}
@@ -129,3 +129,33 @@ def test_rows_mask_restricts_rows():
     m = (p["asset"] == "X0").to_numpy()
     ctx = build_context(p, horizon=10, signal_info=INFO, rows_mask=m)
     assert len(ctx.date_code) == int(m.sum())
+
+
+def _row(**kw):
+    base = {"a": "A", "b": "B", "family_a": "meanrev", "family_b": "trend", "direction": "long",
+            "jaccard": 0.1, "n_ab": 500, "n_dates_ab": 300, "n_a_only": 500, "n_b_only": 500,
+            "mean_ab": 0.01, "edge_ab": 0.01, "t_ab": 3.0, "p_ab": 0.01, "q_ab": 0.01,
+            "edge_a_only": 0.0, "edge_b_only": 0.0, "cond_a_given_b": 0.01, "cond_b_given_a": 0.01,
+            "lift": 0.01, "t_lift": 3.0, "p_lift": 0.01, "q_lift": 0.01,
+            "insufficient": False, "verdict": ""}
+    base.update(kw)
+    return base
+
+
+def test_significant_lift_is_never_redundant():
+    # significant positive lift but the combo itself loses money, overlap high
+    t = pd.DataFrame([_row(jaccard=0.8, mean_ab=-0.002, lift=0.01, q_lift=0.01),
+                      _row(jaccard=0.8, q_lift=0.5)], columns=PAIR_COLS)
+    v = add_pair_verdicts(t, 10)["verdict"].tolist()
+    assert v == ["not significant", "redundant"]
+
+
+def test_verdicts_on_concatenated_frame_need_no_attrs():
+    t = pd.concat([pd.DataFrame([_row(n_a_only=0, insufficient=True, lift=np.nan, q_lift=np.nan)],
+                                columns=PAIR_COLS),
+                   pd.DataFrame([_row(n_a_only=0, n_dates_ab=150, insufficient=True,
+                                      lift=np.nan, q_lift=np.nan)], columns=PAIR_COLS)],
+                  ignore_index=True)
+    assert add_pair_verdicts(t, 10)["verdict"].tolist() == ["redundant", "redundant"]
+    # h = 40 needs 200 combo dates: the second row is now too small to be called redundant
+    assert add_pair_verdicts(t, 40)["verdict"].tolist() == ["redundant", "insufficient"]

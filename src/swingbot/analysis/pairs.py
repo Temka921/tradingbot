@@ -116,36 +116,39 @@ def group_stats(ctx: EdgeContext, mask: np.ndarray, direction: str) -> GroupStat
     return GroupStats(n, int(len(has)), float(daily.mean()), edge)
 
 
-def _empty_only_reason(t: pd.DataFrame, min_dates: int) -> pd.Series:
-    """Insufficient only because A never fires without B (or vice versa)."""
-    combo_ok = (t["n_ab"] >= config.MIN_N) & (t["n_dates_ab"] >= min_dates)
-    return combo_ok & ((t["n_a_only"] == 0) | (t["n_b_only"] == 0))
+def combo_sufficient(n_ab, n_dates_ab, horizon: int):
+    """The single sufficiency rule for a combo group: n >= MIN_N and n_dates >= max(MIN_N, 5h).
+
+    Works on scalars and on Series/arrays alike.
+    """
+    min_dates = max(config.MIN_N, min_dates_for_test(horizon))
+    return (n_ab >= config.MIN_N) & (n_dates_ab >= min_dates)
 
 
-def add_pair_verdicts(t: pd.DataFrame) -> pd.DataFrame:
+def add_pair_verdicts(t: pd.DataFrame, horizon: int) -> pd.DataFrame:
     """Set ``verdict`` (one of ``PAIR_VERDICTS``), first matching rule wins.
 
-    - insufficient (but "redundant" when the combo itself is sufficient and an
-      only-group is empty: one signal never fires without the other);
+    - insufficient (but "redundant" when the combo itself is sufficient, see
+      ``combo_sufficient``, and an only-group is empty: one signal never fires
+      without the other);
     - synergy: q_lift < 0.10, lift > 0 and mean_ab > 0;
     - conflict: q_lift < 0.10 and lift < 0;
-    - redundant: not significant and jaccard >= config.REDUNDANT_JACCARD;
-    - not significant otherwise.
-    The horizon used for the combo's date minimum is ``t.attrs["horizon"]`` (default 10).
+    - redundant: not significant (q_lift NaN or >= 0.10) and
+      jaccard >= config.REDUNDANT_JACCARD;
+    - not significant otherwise (including q_lift < 0.10 with lift > 0 but mean_ab <= 0).
     """
     t = t.copy()
-    horizon = int(t.attrs.get("horizon", 10))
-    min_dates = max(config.MIN_N, min_dates_for_test(horizon))
     q = t["q_lift"].astype("float64")
     lift = t["lift"].astype("float64")
     sig = q < Q_SIGNIFICANT
     insufficient = t["insufficient"].astype(bool)
+    only_empty = (t["n_a_only"] == 0) | (t["n_b_only"] == 0)
     conds = [
-        insufficient & _empty_only_reason(t, min_dates),
+        insufficient & only_empty & combo_sufficient(t["n_ab"], t["n_dates_ab"], horizon),
         insufficient,
         sig & (lift > 0) & (t["mean_ab"].astype("float64") > 0),
         sig & (lift < 0),
-        t["jaccard"].astype("float64") >= config.REDUNDANT_JACCARD,
+        ~sig & (t["jaccard"].astype("float64") >= config.REDUNDANT_JACCARD),
     ]
     choices = ["redundant", "insufficient", "synergy", "conflict", "redundant"]
     t["verdict"] = np.select(conds, choices, default="not significant") if len(t) else []
@@ -173,7 +176,6 @@ def pair_table(panel: pd.DataFrame, horizon: int = 10, metric: str = "excess",
       either only-group is empty or has no edge p-value (too few dates).
     """
     ctx = build_context(panel, horizon, metric, split, signal_info)
-    min_dates = max(config.MIN_N, min_dates_for_test(horizon))
     names = list(ctx.info)
     out = []
     for i, a in enumerate(names):
@@ -196,7 +198,7 @@ def pair_table(panel: pd.DataFrame, horizon: int = 10, metric: str = "excess",
             else:
                 best = ao if ea >= eb else bo
                 lift_t = diff_test(ab.edge, best.edge, horizon)
-            insufficient = (ab.n < config.MIN_N or ab.n_dates < min_dates
+            insufficient = (not combo_sufficient(ab.n, ab.n_dates, horizon)
                             or ao.n == 0 or bo.n == 0
                             or np.isnan(ao.edge.p) or np.isnan(bo.edge.p))
             out.append({
@@ -216,5 +218,4 @@ def pair_table(panel: pd.DataFrame, horizon: int = 10, metric: str = "excess",
     for c in ("n_ab", "n_dates_ab", "n_a_only", "n_b_only"):
         t[c] = t[c].astype(np.int64)
     t["insufficient"] = t["insufficient"].astype(bool)
-    t.attrs["horizon"] = int(horizon)
-    return add_pair_verdicts(t)
+    return add_pair_verdicts(t, horizon)

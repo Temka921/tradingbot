@@ -1,4 +1,4 @@
-"""CLI: build the solo-signal HTML report from data/panel/*.parquet."""
+"""CLI: build the solo and combo HTML reports from data/panel/*.parquet."""
 import argparse
 import datetime as dt
 from pathlib import Path
@@ -7,6 +7,7 @@ import pandas as pd
 
 from swingbot import config
 from swingbot.report.build import build_report
+from swingbot.report.combos import build_combo_report
 
 
 def main() -> None:
@@ -23,8 +24,9 @@ def main() -> None:
     if not panels:
         raise SystemExit("no panels found")
     stamp = dt.date.today().isoformat()
-    out = Path(config.DATA_DIR).parent / "reports" / f"solo_report_{stamp}.html"
-    print(build_report(panels, out, horizon=args.horizon, as_of=stamp))
+    reports = Path(config.DATA_DIR).parent / "reports"
+    print(build_report(panels, reports / f"solo_report_{stamp}.html", horizon=args.horizon, as_of=stamp))
+    print(build_combo_report(panels, reports / f"combo_report_{stamp}.html", horizon=args.horizon, as_of=stamp))
 
 
 if __name__ == "__main__":

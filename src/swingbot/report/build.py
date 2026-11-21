@@ -92,18 +92,27 @@ def _bps(v) -> str:
     return "" if pd.isna(v) else f"{v * 1e4:.1f}"
 
 
+_TEXT_COLS = {"signal", "family", "direction", "verdict", "a", "b", "c", "family_a", "family_b", "regime",
+              "best_pair"}
+_INT_COLS = {"n_all", "n_solo", "n_dates", "n_ab", "n_dates_ab", "n_a_only", "n_b_only", "n_abc", "n_dates_abc"}
+_BPS_COLS = {"mean_all", "edge_vs_all_days", "mean_solo", "median_all", "mean_ab", "edge_ab", "edge_a_only",
+             "edge_b_only", "lift", "mean_abc", "edge_abc", "edge_best_pair_only", "cond_a_given_b",
+             "cond_b_given_a"}
+_P_COLS = {"p", "q", "p_ab", "q_ab", "p_lift", "q_lift"}
+
+
 def _fmt(col: str, v) -> str:
-    if col in ("signal", "family", "direction", "verdict"):
+    if col in _TEXT_COLS:
         return str(v)
-    if col in ("n_all", "n_solo", "n_dates"):
+    if col in _INT_COLS:
         return str(int(v))
     if pd.isna(v):
         return ""
-    if col in ("mean_all", "edge_vs_all_days", "mean_solo", "median_all"):
+    if col in _BPS_COLS:
         return _bps(v)
-    if col == "t":
+    if col in ("t", "t_ab", "t_lift", "jaccard"):
         return f"{v:.2f}"
-    if col in ("p", "q"):
+    if col in _P_COLS:
         return f"{v:.3f}"
     if col == "hit_rate":
         return f"{v * 100:.1f}%"
@@ -213,6 +222,12 @@ def universe_mean_excess(panel: pd.DataFrame, horizon: int) -> float:
     return float(pd.Series(v[ok]).groupby(disc["date"].to_numpy()[ok]).mean().mean())
 
 
+def stock_mean_text(panel: pd.DataFrame, horizon: int) -> str:
+    """Survivorship-text figure: the stock view's universe mean excess, in bps per horizon."""
+    x = universe_mean_excess(panel, horizon)
+    return "n/a" if np.isnan(x) else f"{x * 1e4:+.1f} bps per {horizon} days"
+
+
 def build_report(panels: dict[str, pd.DataFrame], out_path: Path, horizon: int = 10,
                  quality: pd.DataFrame | None = None, as_of: str | None = None) -> Path:
     out_path = Path(out_path)
@@ -240,8 +255,7 @@ def build_report(panels: dict[str, pd.DataFrame], out_path: Path, horizon: int =
         leaders.append({"view": view, "suspect": view in SUSPECT, "primary": view in PRIMARY,
                         "rows": _rows(lb, LEADER_COLS), "counts": verdict_counts(lb)})
         if view == "stock":
-            x = universe_mean_excess(panel, horizon)
-            stock_mean = "n/a" if np.isnan(x) else f"{x * 1e4:+.1f} bps per {horizon} days"
+            stock_mean = stock_mean_text(panel, horizon)
         coverage.append({
             "view": view, "assets": len(syms), "rows": len(panel),
             "start": str(pd.to_datetime(panel["date"]).min().date()),

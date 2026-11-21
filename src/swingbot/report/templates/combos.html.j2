@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Swing research: combos {{ stamp }}</title>
+<script src="{{ cdn }}"></script>
+<style>
+ body{font-family:system-ui,Segoe UI,Arial,sans-serif;margin:0 auto;padding:12px 16px;max-width:1200px;color:#1b1f24;background:#fff;overflow-wrap:anywhere}
+ h1{font-size:1.4rem} h2{font-size:1.15rem;margin-top:2rem;border-bottom:1px solid #ccd;padding-bottom:4px}
+ .caveat{background:#fff4d6;border:1px solid #e0b84a;padding:10px 12px;border-radius:6px}
+ .how{background:#eef3fb;border:1px solid #b9c9e6;padding:8px 12px;border-radius:6px;font-size:.92rem}
+ .scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;max-width:100%}
+ table{border-collapse:collapse;font-size:.82rem;white-space:nowrap}
+ th,td{border:1px solid #d5d9e0;padding:3px 7px;text-align:right} th{background:#f0f2f6;position:sticky;top:0}
+ td:nth-child(-n+2),th:nth-child(-n+2){text-align:left}
+ tr.insuf td{color:#9aa0a8;background:#f6f6f6}
+ .plot{max-width:100%;overflow-x:auto}
+</style></head><body>
+<h1>Swing research report: combinations (horizon {{ horizon }} days)</h1>
+<p>Generated {{ stamp }}. Research tool only; not trading or investment advice.</p>
+
+<div class="caveat"><strong>Caveats.</strong> {{ caveat }}
+<p>{{ survivorship }}</p>
+<p>{{ combo_caveat }}</p></div>
+
+<div class="how"><strong>How to read this.</strong>
+<ul>
+<li><b>A&amp;B</b>: rows where both signals fire; <b>A only</b> / <b>B only</b>: rows where just that one fires. Edges are the group's average excess (next-open entry, net of costs, over the benchmark) minus the same-day average of all rows, in bps.</li>
+<li><b>Lift</b>: edge A&amp;B minus the better of the two single-only edges. A pair only matters if firing together beats the better signal alone.</li>
+<li><b>Verdict</b>: <i>synergy</i> = q lift &lt; 0.10, lift &gt; 0 and mean excess &gt; 0. <i>Conflict</i> = q lift &lt; 0.10, lift &lt; 0. <i>Redundant</i> = not significant and the signals fire on mostly the same rows (Jaccard at or above the threshold), or one never fires without the other. <i>Insufficient</i>: too few occurrences or dates; never a winner.</li>
+<li><b>Jaccard</b>: shared firing rows divided by rows where either fires (0 to 1). Signals that never fire are left blank.</li>
+</ul></div>
+
+{% for v in views %}
+<h2>{{ loop.index }}. {{ v.view }}{% if v.suspect %} ({{ suspect_label|safe }}){% elif v.primary %} (primary){% endif %}</h2>
+<p>Pairs ({{ v.n_pairs }}): {% for k in verdicts %}{{ k }}: {{ v.pair_counts.get(k, 0) }}{% if not loop.last %} · {% endif %}{% endfor %}<br>
+Triples ({{ v.n_triples }}): {% for k in verdicts %}{{ k }}: {{ v.triple_counts.get(k, 0) }}{% if not loop.last %} · {% endif %}{% endfor %}</p>
+
+<h3>Pairs</h3>
+<p>All synergy and conflict rows plus the {{ top_pairs }} non-insufficient rows with the highest edge A&amp;B ({{ v.n_pairs_shown }} of {{ v.n_pairs }} shown; the CSV has every pair). Grey rows are insufficient.</p>
+<div class="scroll"><table><tr>{% for h in pair_headers %}<th>{{ h }}</th>{% endfor %}</tr>
+{% for r in v.pair_rows %}<tr{% if r.insufficient %} class="insuf"{% endif %}>{% for c in r.cells %}<td>{{ c }}</td>{% endfor %}</tr>
+{% endfor %}</table></div>
+
+<h3>Triples</h3>
+{% if v.triple_rows %}<p>Triples built only from pairs with positive lift; lift is against the best of the three pair-only groups.</p>
+<div class="scroll"><table><tr>{% for h in triple_headers %}<th>{{ h }}</th>{% endfor %}</tr>
+{% for r in v.triple_rows %}<tr{% if r.insufficient %} class="insuf"{% endif %}>{% for c in r.cells %}<td>{{ c }}</td>{% endfor %}</tr>
+{% endfor %}</table></div>{% else %}<p>No candidate triples (no three pairs with positive lift).</p>{% endif %}
+
+<h3>Synergy pairs by trend regime</h3>
+{% if v.regime_rows %}<p>A&amp;B edge of each synergy pair inside each trend regime, against the same-day average of rows in that regime. Slices under 30 rows are insufficient.</p>
+<div class="scroll"><table><tr>{% for h in regime_headers %}<th>{{ h }}</th>{% endfor %}</tr>
+{% for r in v.regime_rows %}<tr{% if r.insufficient %} class="insuf"{% endif %}>{% for c in r.cells %}<td>{{ c }}</td>{% endfor %}</tr>
+{% endfor %}</table></div>{% else %}<p>No synergy pairs to slice.</p>{% endif %}
+
+<h3>Jaccard heatmap</h3>
+<div class="plot">{{ v.heat|safe }}</div>
+
+<h3>Redundancy groups</h3>
+{% if v.groups %}<ul>{% for g in v.groups %}<li>{{ g|join(', ') }}</li>{% endfor %}</ul>
+{% else %}<p>No groups of signals with Jaccard at or above the threshold.</p>{% endif %}
+{% endfor %}
+</body></html>

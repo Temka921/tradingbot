@@ -31,6 +31,26 @@ def _eligible_assets(market: str) -> pd.DataFrame:
     return meta[meta["symbol"].isin(keep)].reset_index(drop=True)
 
 
+def split_relistings(symbol: str, df: pd.DataFrame,
+                     max_gap_days: int = config.RELIST_GAP_DAYS) -> list[tuple[str, pd.DataFrame]]:
+    """Split ``df`` at every gap between consecutive dates longer than ``max_gap_days``.
+
+    Binance reuses tickers (LUNAUSDT is Terra LUNA, then an unrelated coin), so each
+    segment is a separate asset. Segments come in time order; the last keeps
+    ``symbol``, earlier ones are named ``f"{symbol}@{first_date:%Y-%m-%d}"``.
+    """
+    if len(df) < 2:
+        return [(symbol, df)]
+    gaps = df.index.to_series().diff().dt.days.to_numpy() > max_gap_days
+    cuts = [0] + [int(i) for i in gaps.nonzero()[0]] + [len(df)]
+    if len(cuts) == 2:
+        return [(symbol, df)]
+    segs = [df.iloc[a:b] for a, b in zip(cuts[:-1], cuts[1:])]
+    out = [(f"{symbol}@{seg.index[0]:%Y-%m-%d}", seg) for seg in segs[:-1]]
+    out.append((symbol, segs[-1]))
+    return out
+
+
 def build_panel(market: str, allow_holdout: bool = False,
                 max_skip_frac: float | None = None) -> pd.DataFrame:
     """One long panel for ``market``.
@@ -51,46 +71,56 @@ def build_panel(market: str, allow_holdout: bool = False,
 
     # Load every asset exactly once (one holdout-log entry per asset).
     bars: dict[str, pd.DataFrame] = {}
+    base: dict[str, str] = {}  # asset name -> meta symbol (differs only for relisted crypto segments)
     for sym in meta["symbol"]:
         try:
-            bars[sym] = store.load_bars(sym, market, allow_holdout=allow_holdout)
+            loaded = store.load_bars(sym, market, allow_holdout=allow_holdout)
+            segs = split_relistings(sym, loaded) if market == "crypto" else [(sym, loaded)]
+            for name, seg in segs:
+                bars[name] = seg
+                base[name] = sym
         except Exception as e:  # corrupt/unreadable file
             if sym == bench_sym:
                 raise
             _skip(sym, f"{type(e).__name__}: {e}")
             failed.append(sym)
-    bench = bars[bench_sym]
+    bench = bars[bench_sym]  # the last segment keeps the plain symbol name
+    lasts = {n: d.index[-1] for n, d in bars.items() if len(d)}
+    market_last = max(lasts.values()) if lasts else None
+    delisted = {n: bool(market_last - last > pd.Timedelta(days=config.DELIST_GAP_DAYS))
+                for n, last in lasts.items()}
 
     closes = pd.DataFrame({s: d["close"] for s, d in bars.items()})
     xs = cross_sectional_signals(closes)  # once per market, this market's closes only
     del closes
 
     parts = []
-    for r in meta.itertuples():
-        if r.symbol not in bars:
-            continue
-        df = bars.pop(r.symbol)
+    rows = {r.symbol: r for r in meta.itertuples()}
+    for name in list(bars):
+        r = rows[base[name]]
+        df = bars.pop(name)
         try:
             sig = compute_signals(df)
-            for name, frame in xs.items():
-                sig[name] = frame[r.symbol].reindex(df.index, fill_value=False).astype(bool)
-            part = pd.concat([sig, compute_outcomes(df, bench, market), label_regimes(df, bench)], axis=1)
-            part.insert(0, "asset", r.symbol)
+            for sig_name, frame in xs.items():
+                sig[sig_name] = frame[name].reindex(df.index, fill_value=False).astype(bool)
+            part = pd.concat([sig, compute_outcomes(df, bench, market, delisted.get(name, False)), label_regimes(df, bench)], axis=1)
+            part.insert(0, "asset", name)
+            part["delisted"] = delisted.get(name, False)
             for col in META_COLS:
                 part[col] = getattr(r, col)
             part["market"] = market
             part["split"] = store.split_of(df.index, market)
             part = part[part["split"] != "pre"]
             if part.empty:
-                _skip(r.symbol, "no rows after dropping pre-period")
+                _skip(name, "no rows after dropping pre-period")
                 expected += 1
                 continue
             f64 = part.select_dtypes("float64").columns
             part[f64] = part[f64].astype("float32")
             parts.append(part.reset_index())  # 'date' index -> column
         except Exception as e:
-            _skip(r.symbol, f"{type(e).__name__}: {e}")
-            failed.append(r.symbol)
+            _skip(name, f"{type(e).__name__}: {e}")
+            failed.append(name)
     n_assets = len(meta)
     msg = f"{market}: {len(failed)} of {n_assets} assets skipped for errors, {expected} expected skips"
     print(msg)

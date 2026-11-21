@@ -17,6 +17,8 @@ SPLITS: dict[str, dict[str, tuple[str, str]]] = {
 HOLDOUT_START = "2024-01-01"
 MIN_N = 100
 MIN_N_SLICE = 30
+DELIST_GAP_DAYS = 7          # last date this many days before the market's last date -> delisted
+RELIST_GAP_DAYS = 5          # crypto: a gap longer than this splits a symbol into separate assets
 MAX_SKIP_FRAC = 0.02      # build_panel raises if more assets than this fail with an error
 BENCHMARK: dict[str, str] = {"stock": "SPY", "crypto": "BTCUSDT"}
 

@@ -275,3 +275,50 @@ def test_build_panel_empty_after_holdout_cut_skipped(capsys):
     out = panel.build_panel("stock")
     assert set(out["asset"]) == {"SPY", "AAA"}
     assert "SKIP LATE" in capsys.readouterr().out
+
+
+def test_panel_marks_delisted(capsys):
+    btc = rand_bars(900, seed=1, start="2020-01-01", freq="D")       # ends mid-2022, the market's last date
+    dead = rand_bars(400, seed=2, start="2020-01-01", freq="D")      # ends early 2021
+    for s, d in (("BTCUSDT", btc), ("LUNAUSDT", dead)):
+        store.save_bars(s, "crypto", d)
+    _meta([("BTCUSDT", "crypto", "crypto", "major", False, True),
+           ("LUNAUSDT", "crypto", "crypto", "alt", False, False)])
+    out = panel.build_panel("crypto")
+    assert out.groupby("asset", observed=True)["delisted"].first().to_dict() == {"BTCUSDT": False, "LUNAUSDT": True}
+    assert out["delisted"].dtype == bool
+    last = out[out.asset == "LUNAUSDT"].iloc[-3]
+    assert not np.isnan(last["gross_10"])               # exits at the last close instead of NaN
+
+
+def test_split_relistings():
+    d1 = pd.date_range("2021-01-01", periods=30, freq="D")
+    d2 = pd.date_range(d1[-1] + pd.Timedelta(days=18), periods=20, freq="D")
+    df = bars_from_close([1.0] * 50)
+    df.index = pd.DatetimeIndex(list(d1) + list(d2), name="date")
+    segs = panel.split_relistings("LUNAUSDT", df)
+    assert [s for s, _ in segs] == ["LUNAUSDT@2021-01-01", "LUNAUSDT"]
+    assert [len(x) for _, x in segs] == [30, 20]
+    assert panel.split_relistings("BTCUSDT", df.iloc[:30])[0][0] == "BTCUSDT"
+
+
+def test_panel_relisted_symbol_becomes_two_assets(capsys):
+    # BTCUSDT continuous; LUNAUSDT with an 18-day gap -> two assets, the first delisted
+    btc = rand_bars(900, seed=1, start="2020-01-01", freq="D")
+    l1 = rand_bars(200, seed=2, start="2020-01-01", freq="D")
+    l2 = rand_bars(681, seed=3, start=str(l1.index[-1] + pd.Timedelta(days=19))[:10], freq="D")
+    assert (l2.index[0] - l1.index[-1]).days == 19       # 18 missing days
+    luna = pd.concat([l1, l2])
+    store.save_bars("BTCUSDT", "crypto", btc)
+    store.save_bars("LUNAUSDT", "crypto", luna)
+    _meta([("BTCUSDT", "crypto", "crypto", "major", False, True),
+           ("LUNAUSDT", "crypto", "crypto", "alt", False, False)])
+    out = panel.build_panel("crypto")
+    assert set(out["asset"]) == {"BTCUSDT", "LUNAUSDT@2020-01-01", "LUNAUSDT"}
+    assert (out["asset"] == "LUNAUSDT@2020-01-01").sum() == 200
+    assert (out["asset"] == "LUNAUSDT").sum() == 681
+    d = out.groupby("asset", observed=True)["delisted"].first().to_dict()
+    assert d["LUNAUSDT@2020-01-01"] is True and d["LUNAUSDT"] is False
+    assert (out[out.asset == "LUNAUSDT@2020-01-01"]["is_major"] == False).all()  # same meta row
+    first = out[out.asset == "LUNAUSDT@2020-01-01"]
+    assert not np.isnan(first.iloc[-3]["gross_10"])      # dead segment exits at its last close

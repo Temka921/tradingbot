@@ -160,3 +160,42 @@ def test_calendar_mismatch():
         checked += 1
     assert checked > 10
     assert out["bench_gross_5"].iloc[-5:].isna().all()
+
+
+def bars_from_closes(closes):
+    """open = close = given, high/low +-1%."""
+    c = np.asarray(closes, dtype=float)
+    idx = pd.date_range("2020-01-01", periods=len(c), freq="D", name="date")
+    return pd.DataFrame({"open": c, "high": c * 1.01, "low": c * 0.99, "close": c,
+                         "volume": 1000.0}, index=idx)
+
+
+def test_delisted_exit_at_last_close():
+    df = bars_from_closes([10, 10, 10, 10, 5])          # last bar L = 4; open == close
+    bench = bars_from_closes([100] * 5)
+    out = compute_outcomes(df, bench, "crypto", delisted=True)
+    # t=1: entry open[2]=10, horizon 5 would end at t=6 > L -> exits at close[4]=5
+    assert out.loc[df.index[1], "gross_5"] == pytest.approx(-0.5)
+    assert out.loc[df.index[1], "ret_long_5"] == pytest.approx(-0.5 - 0.003)
+    assert out.loc[df.index[1], "excess_long_5"] == pytest.approx(-0.5 - 0.003)
+    assert np.isnan(out.loc[df.index[4], "gross_5"])    # no t+1 bar: no entry
+    assert out["atr_exit_long"].notna().sum() >= 0      # does not crash on a short series
+    assert np.isnan(out.loc[df.index[1], "mfe_5"]) and np.isnan(out.loc[df.index[1], "mae_5"])
+
+
+def test_delisted_complete_window_unchanged_and_atr_time_exit():
+    df = make_bars(60)
+    a = compute_outcomes(df, df, "crypto")
+    b = compute_outcomes(df, df, "crypto", delisted=True)
+    full = a["gross_5"].notna()
+    assert np.allclose(a["gross_5"][full], b["gross_5"][full])
+    assert b["gross_5"].iloc[-2] == pytest.approx(df["close"].iloc[-1] / df["open"].iloc[-1] - 1)
+    ok = a["atr_exit_long"].notna()
+    assert np.allclose(a["atr_exit_long"][ok], b["atr_exit_long"][ok])
+    assert b["atr_exit_long"].iloc[-2:-1].notna().all()  # window past L time-exits at close[L]
+
+
+def test_not_delisted_tail_still_nan():
+    df = bars_from_closes([10, 10, 10, 10, 5])
+    out = compute_outcomes(df, bars_from_closes([100] * 5), "crypto")
+    assert out["gross_5"].isna().all()

@@ -21,6 +21,8 @@ def save_bars(symbol: str, market: str, df: pd.DataFrame) -> Path:
 
 def load_bars(symbol: str, market: str, allow_holdout: bool = False) -> pd.DataFrame:
     df = pd.read_parquet(_path(symbol, market))
+    if market not in config.HOLDOUT_MARKETS:
+        return df
     if allow_holdout:
         config.DATA_DIR.mkdir(parents=True, exist_ok=True)
         stamp = datetime.now(timezone.utc).isoformat(timespec="seconds")

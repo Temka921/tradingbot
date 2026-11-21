@@ -1,15 +1,25 @@
 """CLI: download stock/crypto bars. Core logic lives in swingbot.data.download."""
 import argparse
 
+from swingbot.data import foreign
 from swingbot.data.download import run
 from swingbot.data.universe import crypto_universe, stock_universe, with_benchmark
 
 
 def main() -> None:
     p = argparse.ArgumentParser()
-    p.add_argument("--market", choices=["stock", "crypto", "all"], default="all")
+    p.add_argument("--market", choices=["stock", "crypto", "all", "japan", "europe", "fng"], default="all")
     p.add_argument("--limit", type=int, default=None, help="max assets per market")
     args = p.parse_args()
+    if args.market in ("japan", "europe"):
+        for m in foreign.download_market(args.market):
+            print(m)
+        return
+    if args.market == "fng":
+        s = foreign.fetch_fng()
+        foreign.save_fng(s)
+        print(f"OK fng: {len(s)} days")
+        return
     assets = []
     if args.market in ("stock", "all"):
         assets += with_benchmark(stock_universe(), "stock", args.limit)

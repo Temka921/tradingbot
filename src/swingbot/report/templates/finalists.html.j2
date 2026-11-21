@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Swing research: finalists {{ stamp }}</title>
+<script src="{{ cdn }}"></script>
+<style>
+ body{font-family:system-ui,Segoe UI,Arial,sans-serif;margin:0 auto;padding:12px 16px;max-width:1200px;color:#1b1f24;background:#fff;overflow-wrap:anywhere}
+ h1{font-size:1.4rem} h2{font-size:1.15rem;margin-top:2rem;border-bottom:1px solid #ccd;padding-bottom:4px}
+ .caveat{background:#fff4d6;border:1px solid #e0b84a;padding:10px 12px;border-radius:6px}
+ .status{background:#eef7ee;border:1px solid #a9cfa9;padding:8px 12px;border-radius:6px}
+ .scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;max-width:100%}
+ table{border-collapse:collapse;font-size:.82rem;white-space:nowrap}
+ th,td{border:1px solid #d5d9e0;padding:3px 7px;text-align:right} th{background:#f0f2f6}
+ td:first-child,th:first-child{text-align:left}
+ tr.fin td{background:#eef7ee}
+ .plot{max-width:100%;overflow-x:auto}
+</style></head><body>
+<h1>Swing research report: finalists (horizon {{ horizon }} days)</h1>
+<p>Generated {{ stamp }}. Research tool only; not trading or investment advice.</p>
+
+<div class="caveat"><strong>Caveats.</strong>
+<p>{{ survivorship }}</p>
+<p>{{ sizing_note }}</p>
+<p>{{ short_note }}</p></div>
+
+{% for v in views %}
+<h2 id="view-{{ v.view }}">{{ loop.index }}. {{ v.view }}{% if v.suspect %} ({{ suspect_label|safe }}){% elif v.primary %} (primary){% endif %}</h2>
+<p>Finalists: {{ v.n_finalists }} of {{ v.n_gated }} gated hypotheses.</p>
+{% if v.gate_rows %}<div class="scroll"><table><tr>{% for h in gate_headers %}<th>{{ h }}</th>{% endfor %}</tr>
+{% for r in v.gate_rows %}<tr{% if r.finalist %} class="fin"{% endif %}>{% for c in r.cells %}<td>{{ c }}</td>{% endfor %}</tr>
+{% endfor %}</table></div>{% else %}<p>No discovery hypotheses (no candidate or synergy) to gate in this view.</p>{% endif %}
+
+{% for f in v.finalists %}
+<h3>Finalist: {{ f.rule }} ({{ f.direction }})</h3>
+{% if f.suspect %}<p class="caveat"><b>{{ suspect_label|safe }}.</b> This finalist is not eligible for the holdout (survivorship).</p>
+{% elif f.eligible %}<p class="status">Eligible for the one-time holdout run.</p>{% endif %}
+
+<h4>Validation backtest</h4>
+{% if f.bench_missing %}<p>Benchmark data: benchmark unavailable, so benchmark figures are n/a and the chart has no benchmark line.</p>{% endif %}
+<div class="scroll"><table><tr><th>Metric</th><th>Value</th></tr>
+{% for r in f.val_metrics %}<tr><td>{{ r[0] }}</td><td>{{ r[1] }}</td></tr>{% endfor %}</table></div>
+<div class="plot">{{ f.val_chart|safe }}</div>
+<h4>Yearly returns (validation)</h4>
+<div class="scroll"><table><tr><th>Year</th><th>Return</th><th>Trades entered</th></tr>
+{% for y in f.years %}<tr><td>{{ y.year }}</td><td>{{ y.ret }}</td><td>{{ y.n }}</td></tr>{% endfor %}</table></div>
+
+<h4>Discovery backtest (in-sample, for reference)</h4>
+{% if f.disc_metrics %}<div class="scroll"><table><tr><th>Metric</th><th>Value (in-sample)</th></tr>
+{% for r in f.disc_metrics %}<tr><td>{{ r[0] }}</td><td>{{ r[1] }}</td></tr>{% endfor %}</table></div>
+<div class="plot">{{ f.disc_chart|safe }}</div>{% else %}<p>No discovery rows.</p>{% endif %}
+
+<h4>Robustness: {{ f.n_runs }} runs</h4>
+<p>Robustness: {{ f.n_runs }} runs (max_positions 8, 10, 12 by seeds 0 to 4), validation split.</p>
+<div class="scroll"><table><tr><th></th><th>Min</th><th>Median</th><th>Max</th></tr>
+<tr><td>Total return</td>{% for c in f.rob_ret %}<td>{{ c }}</td>{% endfor %}</tr>
+<tr><td>Sharpe (monthly)</td>{% for c in f.rob_sharpe %}<td>{{ c }}</td>{% endfor %}</tr></table></div>
+<details><summary>All {{ f.n_runs }} runs</summary>
+<div class="scroll"><table><tr><th>max_positions</th><th>Seed</th><th>Total return</th><th>Sharpe</th><th>Trades</th></tr>
+{% for r in f.rob_rows %}<tr>{% for c in r %}<td>{{ c }}</td>{% endfor %}</tr>{% endfor %}</table></div></details>
+
+<h4>Tail check (2.5/97.5 percentile clip)</h4>
+<p>{{ tail_note }}</p>
+<p>Firings with known return: {{ f.tail.n }}. Mean trade return raw <b>{{ f.tail.raw }} bps</b>, clipped at 2.5/97.5 <b>{{ f.tail.clipped }} bps</b>.{% if f.tail.gone %} <b>The mean is not positive after clipping: the edge is tail-driven.</b>{% endif %}</p>
+{% endfor %}
+{% endfor %}
+
+<h2 id="holdout">Holdout status</h2>
+{% if eligible %}<p class="status">Eligible for the one-time holdout run: {{ eligible|join(", ") }}. Run scripts/holdout.py (it runs once and then refuses).</p>
+{% else %}<p class="status">{{ holdout_locked }}</p>{% endif %}
+</body></html>

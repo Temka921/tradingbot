@@ -5,6 +5,7 @@
 \usepackage{microtype}
 \usepackage{amsmath}
 \usepackage{booktabs}
+\usepackage{graphicx}
 \usepackage{tabularx}
 \usepackage{array}
 \usepackage[authoryear,round]{natbib}
@@ -46,8 +47,11 @@ No strategy passed. Several looked excellent in sample: one crypto strategy retu
 check, buying U.S. stocks when RSI(14) falls below 30, did worse than random stocks from the same
 list and than the S\&P 500 ETF in 2025 to 2026. A trend rule cut drawdowns but earned less than
 simply holding the same ETFs, and the carry trade was smooth but earned less than cash in 2022 to
-2023. Simple buy-and-hold matched or beat every strategy we tested. We release all code and data so
-that others can check these results and test their own ideas the same way.
+2023. The conclusions hold at 5- and 20-day horizons, and after White's Reality Check and the
+deflated Sharpe ratio, every strategy that looked strong in development loses its significance except
+the carry trade, whose problem was size rather than noise. Simple buy-and-hold matched or beat every
+strategy we tested. We release all code and data so that others can check these results and test
+their own ideas the same way.
 \end{abstract}
 
 \noindent\textbf{Keywords:} technical analysis, backtest overfitting, out-of-sample testing,
@@ -160,8 +164,10 @@ The 41 signals cover trend, pullback, breakout, mean reversion, momentum, diverg
 support and resistance, and candlestick families, all with textbook parameters (for example
 RSI(14) computed with Wilder smoothing, \citealp{wilder1978new}); Appendix~\ref{app:signals} lists
 them. A truncation test confirms that no signal changes when future data are removed. Trades enter
-at the open of day $t+1$. The main horizon is 10 trading days. Round-trip costs are 0.10\% for U.S.
-stocks and ETFs and 0.30\% for crypto. Excess return is the trade's return net of costs minus the
+at the open of day $t+1$. The main horizon is 10 trading days; 5 and 20 days are used as robustness
+checks. Round-trip costs are 0.10\% for U.S. stocks and ETFs and 0.30\% for crypto. The crypto figure
+is twice Binance's 0.10\% regular-user spot fee per side \citep{binance_spot_fees}, and the carry
+trade adds the 0.05\% perpetual taker fee per side \citep{binance_futures_fees}. Excess return is the trade's return net of costs minus the
 benchmark's return over the same dates (SPY for stocks and ETFs, BTC for crypto). Returns are
 winsorised at the 0.1st and 99.9th percentiles of each split before any statistic.
 
@@ -179,6 +185,18 @@ A signal is a \emph{candidate} only if it is sufficient, $q<0.10$, its edge is p
 excess return over the benchmark is positive, and its mean absolute return net of costs is
 positive. The last condition was added after a review found that short signals in crypto could beat
 BTC while losing money as plain shorts.
+
+\subsection{Data-snooping corrections}
+Benjamini--Hochberg $q$-values control false discoveries within a table, but they do not answer the
+question a trader actually faces after a search: is the \emph{best} rule found better than what the
+search alone would produce? We answer it with White's Reality Check \citep{white2000reality}. For
+each signal $k$ we form a daily series $d_k(t)$ equal to its same-day edge on dates when it fires
+and zero otherwise, compute $V=\max_k \sqrt{T}\,\bar d_k$, and obtain the null distribution from
+1,000 stationary-bootstrap resamples \citep{politis1994stationary} with mean block length $2h=20$
+days, recentred at the sample means. For portfolio strategies we report the deflated Sharpe ratio
+\citep{bailey2014deflated}, which asks how likely a Sharpe ratio is to be positive after accounting
+for the number of strategies tried (here $N=11$ portfolio-level trials), the dispersion of their
+Sharpe ratios, and the skewness and kurtosis of the chosen strategy's monthly returns.
 
 \subsection{Combinations and machine learning}
 For every pair of same-direction signals we measure \emph{lift}: the edge of days when both fire
@@ -272,9 +290,19 @@ U.S. stocks & 0.010 ($p=0.006$) & 11 & 0.010 ($p=0.12$) & 22 \\
 None of the five crypto candidates passed validation: four had negative edges in 2022 to 2023. Of
 the seven stock candidates, only RSI(14) oversold passed (edge +47 basis points, $q=0.041$). As a
 portfolio over 2018 to 2023 it returned a median of 151\% across 15 runs (range 91\% to 251\%),
-against 84\% for the same-universe random baseline and 96\% for SPY. Its maximum drawdown was 47\%
-against 34\% for SPY, and its Sharpe ratio (0.72 in the example run) was no better than SPY's (0.71).
-Because the stock list is biased, it was not eligible for the holdout under our protocol.
+against 84\% for the same-universe random baseline and 96\% for SPY (Figure~\ref{fig:rsi}). Its
+maximum drawdown was 47\% against 34\% for SPY, and its Sharpe ratio (0.72 in the example run) was no
+better than SPY's (0.71). Its gate $q$-value counts only the nine hypotheses carried forward from
+discovery; in a full table of all 41 signals on the validation split its $q$-value is 0.185, so it
+would not have been called significant there. Because the stock list is biased, it was not eligible
+for the holdout under our protocol.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.92\textwidth]{figures/fig_rsi.pdf}
+\caption{RSI(14) oversold portfolio on U.S. stocks over the validation period, against random
+entries from the same stocks with the same slots and SPY. One example run (seed 0).}\label{fig:rsi}
+\end{figure}
 
 \subsection{Holdout and follow-up tests}
 
@@ -282,16 +310,26 @@ Because the stock list is biased, it was not eligible for the holdout under our 
 to test this signal unchanged on January 2025 to November 2026. It failed. Its edge over the same-day
 average was $-$13.4 basis points ($p=0.70$). As a 10-slot portfolio without per-trade minimum fees
 it returned a median of 6.5\%, against 11.2\% for random stocks from the same list and 24.9\% for
-SPY. We also simulated a \$20 paper account with fractional shares, a one-cent regulatory fee per
-sale and optional 2$\times$ leverage. Every configuration lost money (median end balance \$11 to
-\$17), the cent fee alone cost 15 to 50 basis points per trade, and leverage made every case worse.
-U.S. brokers also require \$2,000 for a margin account.
+SPY. We also simulated a \$20 paper account with fractional shares, a one-cent fee per sale and
+optional 2$\times$ leverage. The cent reflects how brokers commonly pass on FINRA's Trading Activity
+Fee on sales \citep{finra_taf}, with a minimum charge of one cent. Every configuration lost money
+(median end balance \$11 to \$17), the cent fee alone cost 15 to 50 basis points per trade, and
+leverage made every case worse. In practice a \$20 account could not use leverage at all, because
+FINRA requires at least \$2,000 of equity in a margin account \citep{finra4210}.
 
 \paragraph{Trend rule on ETFs.} We tested Faber's 10-month rule on five ETFs (SPY, EFA, IEF, VNQ,
 DBC, with SHY as cash), pass bar fixed in advance: positive return, Sharpe at least that of holding
 the same ETFs, and a smaller maximum drawdown. Table~\ref{tab:trend} shows that it passed in both
 earlier periods only because it cut drawdowns, and was not confirmed on the holdout, where it
-earned 22.6\% against 34.3\% for holding the same ETFs.
+earned 22.6\% against 34.3\% for holding the same ETFs. Figure~\ref{fig:trend} shows the pattern:
+the rule sidestepped most of 2008 and then lagged for the rest of the sample.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.92\textwidth]{figures/fig_trend.pdf}
+\caption{Faber 10-month trend rule against holding the same five ETFs and SPY, December 2006 to
+November 2026 (log scale). Dashed lines mark the start of validation and of the holdout.}\label{fig:trend}
+\end{figure}
 
 \begin{table}[h]
 \centering\small
@@ -337,7 +375,16 @@ S2 momentum + crash switch & 1,753\% & 135\% & 0.88 & Below equal-weight hold (1
 
 C3 is the clearest example of overfitting to one regime. Its only data-chosen setting, whether to
 buy when the index showed fear or greed, was picked on 2018 to 2021, a period dominated by one
-crypto boom. In 2022 to 2023 it bought the strongest coins during short bear-market rallies.
+crypto boom. In 2022 to 2023 it bought the strongest coins during short bear-market rallies
+(Figure~\ref{fig:c3}).
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.92\textwidth]{figures/fig_c3.pdf}
+\caption{C3 (momentum gated by the Fear \& Greed Index) and C1 (momentum with a BTC trend switch)
+against BTC, March 2018 to December 2023 (log scale). The dashed line marks the start of
+validation.}\label{fig:c3}
+\end{figure}
 
 \paragraph{Funding-rate carry.} The last test was a trade with an economic reason rather than a
 price forecast: hold a coin and short the same notional in its perpetual future, and collect the
@@ -361,9 +408,92 @@ F2 rotating & 2022 to 2023 & $-$5.5\% & $-$0.91 & $-$12.5\% & 76 \\
 \end{table}
 
 F1 behaved as carry theory predicts, with almost no losses, but in the 2022 to 2023 bear market
-demand for leverage fell and it earned 2.5\% a year, less than short-term Treasury bills paid at the
-time. F2's turnover consumed its funding income. Both failed validation, so the crypto holdout is
-still unused.
+demand for leverage fell and it earned 2.5\% a year (Figure~\ref{fig:carry}). Three-month Treasury
+bills yielded 2.0\% on average in 2022 and 5.1\% in 2023 \citep{fred_tb3ms}, so the carry trade paid
+less than cash over the period while carrying exchange risk. F2's turnover consumed its funding
+income. Both failed validation, so the crypto holdout is still unused.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.92\textwidth]{figures/fig_carry.pdf}
+\caption{Funding-rate carry, January 2020 to December 2023, with BTC on the right axis for
+reference. The dashed line marks the start of validation.}\label{fig:carry}
+\end{figure}
+
+\subsection{Robustness and data-snooping tests}
+
+\paragraph{Horizon.} Table~\ref{tab:horizon} repeats the single-signal analysis at 5, 10 and 20
+trading days, on the discovery and validation splits separately. At no horizon, in any universe, is
+any signal a candidate in both splits. The crypto signals that qualify on validation are two short
+signals (MACD cross down and Supertrend flip down) that lost money as plain shorts in discovery and
+profited only in the 2022 bear market.
+
+\begin{table}[h]
+\centering\small
+\caption{Candidate signals by horizon (discovery / validation). Full tables of all 41 signals.}\label{tab:horizon}
+\begin{tabular}{lccc}
+\toprule
+Universe & 5 days & 10 days & 20 days \\
+\midrule
+ETFs & 0 / 0 & 0 / 0 & 0 / 0 \\
+Crypto & 6 / 2 & 5 / 1 & 1 / 0 \\
+U.S. stocks (suspect) & 8 / 0 & 7 / 0 & 5 / 0 \\
+Candidates in both splits & none & none & none \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Reality Check.} Table~\ref{tab:rc} shows White's Reality Check for the best of the 41
+signals. In ETFs the best signal is indistinguishable from the best of 41 random rules. In crypto the
+discovery result is borderline ($p=0.052$) and the best validation signal is a different, bear-market
+short ($p=0.14$). In U.S. stocks the test rejects in both splits, and the winner both times is RSI(14)
+oversold. We read this as evidence that the stock result is not a data-mining accident within the
+sample, which is consistent with survivorship bias rather than with a tradable edge: the same signal
+then failed on 2025 to 2026 data, and the same test finds nothing in ETFs, which have no constituent
+survivorship.
+
+\begin{table}[h]
+\centering\small
+\caption{White's Reality Check for the best of 41 signals (10-day horizon, stationary bootstrap,
+1,000 resamples).}\label{tab:rc}
+\begin{tabular}{llrlr}
+\toprule
+Universe & Split & Dates & Best signal & $p$ \\
+\midrule
+ETFs & discovery & 4,528 & 12-1 momentum top decile & 0.21 \\
+ETFs & validation & 1,509 & 52-week high & 0.99 \\
+Crypto & discovery & 1,461 & volume breakout & 0.052 \\
+Crypto & validation & 730 & MACD cross down (short) & 0.14 \\
+U.S. stocks & discovery & 4,528 & RSI(14) oversold & 0.001 \\
+U.S. stocks & validation & 1,509 & RSI(14) oversold & 0.034 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Deflated Sharpe ratio.} Eleven portfolio-level strategies were tried in development, with
+annualised Sharpe ratios from $-0.71$ to $3.66$. Table~\ref{tab:dsr} deflates the strongest of them.
+C3, S2, the RSI(14) portfolio and the trend rule all fall to a probability below 2\% that their true
+Sharpe ratio is positive once the search is accounted for. F1 is the exception: its development
+Sharpe ratio of 3.6 survives deflation. Its failure was economic, not statistical: the return it
+earned so smoothly was smaller than the cash rate.
+
+\begin{table}[h]
+\centering\small
+\caption{Deflated Sharpe ratio of development-period results ($N=11$ trials). Sharpe ratios are
+annualised from monthly returns; the deflated value is the probability that the true Sharpe ratio is
+positive.}\label{tab:dsr}
+\begin{tabular}{lrrrrr}
+\toprule
+Strategy & Months & Sharpe & Skew & Kurtosis & Deflated SR \\
+\midrule
+C3 mood + momentum & 45 & 1.09 & 1.86 & 8.12 & 0.018 \\
+S2 momentum + crash switch & 203 & 1.26 & 0.51 & 5.19 & 0.003 \\
+RSI(14) portfolio & 215 & 0.80 & 0.95 & 11.06 & $<$0.001 \\
+Trend rule A & 132 & 0.67 & $-$0.65 & 4.53 & $<$0.001 \\
+F1 BTC+ETH carry & 23 & 3.64 & 1.38 & 4.06 & 1.000 \\
+\bottomrule
+\end{tabular}
+\end{table}
 
 \section{Discussion}
 
@@ -396,9 +526,11 @@ financial research.
 \section{Limitations}
 
 The data are free and have known defects: the U.S. stock universe is survivorship-biased and Yahoo
-prices are back-adjusted. We used one main horizon (10 days) and textbook parameters only, so a
-tuned version of a signal could behave differently, although tuning would also raise the risk of
-overfitting. Costs are simplified (no taxes, no market impact, fixed per-trade costs). Some
+prices are back-adjusted. The main analysis uses a 10-day horizon, with 5 and 20 days checked only
+for single signals, and textbook parameters only, so a tuned version of a signal could behave
+differently, although tuning would also raise the risk of overfitting. The deflated Sharpe ratio
+pools trials from different asset classes; the high Sharpe ratios of the carry trades widen the
+dispersion of trial Sharpes and so make the deflation stricter for the other strategies. Costs are simplified (no taxes, no market impact, fixed per-trade costs). Some
 validation results were examined informally before the formal gate was written, and the stock and
 ETF holdouts were each opened once for the tests reported here; reproducing those numbers re-reads
 data that have already been seen. The crypto holdout and the Japanese and European data remain

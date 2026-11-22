@@ -153,9 +153,11 @@ def test_daily_funding_sums_per_utc_day():
         "rate": [0.0001, 0.0002, -0.0001, 0.0005]})
     s = futures.daily_funding(df)
     assert s.index.name == "date"
-    assert s.loc["2023-01-01"] == pytest.approx(0.0002)
-    assert s.loc["2023-01-03"] == pytest.approx(0.0005)
-    assert pd.Timestamp("2023-01-02") not in s.index
+    # 00:00 payments settle the previous day's period
+    assert s.loc["2022-12-31"] == pytest.approx(0.0001)
+    assert s.loc["2023-01-01"] == pytest.approx(0.0001)   # 08:00 + 16:00
+    assert s.loc["2023-01-02"] == pytest.approx(0.0005)   # the 2023-01-03 00:00 payment
+    assert pd.Timestamp("2023-01-03") not in s.index
     assert futures.daily_funding(df.iloc[0:0]).empty
 
 

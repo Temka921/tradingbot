@@ -143,10 +143,17 @@ def load_funding(symbol: str, allow_holdout: bool = False) -> pd.DataFrame:
 
 
 def daily_funding(df: pd.DataFrame) -> pd.Series:
-    """Sum of funding rates per UTC day (index `date`, days with no event are absent)."""
+    """Funding earned over each UTC day (index `date`, days with no event are absent).
+
+    A payment at exactly 00:00 settles the period that ended at the previous day's 24:00 close,
+    so it belongs to the previous day: day d holds the payments after 00:00 on d up to and
+    including 00:00 on d+1 (e.g. 08:00 and 16:00 on d plus 00:00 on d+1). This lines up day-d
+    returns with positions actually held over those timestamps (a position opened at d's open
+    does not collect d's 00:00 payment).
+    """
     if df.empty:
         return pd.Series(dtype=float, index=pd.DatetimeIndex([], name="date"), name="funding")
-    day = df["funding_time"].dt.normalize()
+    day = (df["funding_time"] - pd.Timedelta("1ms")).dt.normalize()
     s = df["rate"].groupby(day).sum()
     s.index.name = "date"
     s.name = "funding"

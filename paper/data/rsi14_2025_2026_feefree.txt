@@ -1,0 +1,5 @@
+RSI(14) oversold, single stocks, 2025-01-02 to 2026-11-19 (stock holdout, used once at the user's request).
+Large-account version (no per-sale cent fee), 10 slots, 10-day holds, costs 0.10% per round trip, seeds 0-4:
+  rsi14_oversold total return per seed: -8.7%, +7.2%, +18.8%, -4.4%, +6.5%  (median +6.5%)
+  random same-universe baseline (__all__): +3.8%, -7.8%, +12.4%, +33.7%, +11.2%  (median +11.2%)
+  SPY buy-and-hold over the same period: +24.9%

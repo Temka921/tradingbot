@@ -1,0 +1,54 @@
+{
+  "utc": "2026-11-21T13:45:15+00:00",
+  "who": "user request in chat (option 1: trend-following ETF test)",
+  "rules": "Rule A Faber GTAA-5 (primary), Rule B all ETFs (secondary)",
+  "protocol": "docs/superpowers/specs/2026-11-21-trend-etf-protocol.md",
+  "results": {
+    "holdout": {
+      "table": {
+        "Rule A: trend GTAA-5": {
+          "total_return": 0.22599555270715688,
+          "cagr": 0.0733045591903585,
+          "max_drawdown": -0.062366124340122564,
+          "sharpe_monthly": 1.0721654337850552,
+          "sharpe_vs_shy": 0.6872184035333131
+        },
+        "Bench 1: hold GTAA-5": {
+          "total_return": 0.3434376411097102,
+          "cagr": 0.10794087257528906,
+          "max_drawdown": -0.1053832409051193,
+          "sharpe_monthly": 1.3340566647656649,
+          "sharpe_vs_shy": 1.0092815870233727
+        },
+        "Rule B: trend all ETFs": {
+          "total_return": 0.34642716013450836,
+          "cagr": 0.10879625378667868,
+          "max_drawdown": -0.06647108974128069,
+          "sharpe_monthly": 1.2894250902432203,
+          "sharpe_vs_shy": 1.0208066459784801
+        },
+        "Bench 1B: hold all ETFs": {
+          "total_return": 0.4366995976966155,
+          "cagr": 0.13406202153947988,
+          "max_drawdown": -0.13291993192166207,
+          "sharpe_monthly": 1.3181138771532448,
+          "sharpe_vs_shy": 1.094784800143644
+        },
+        "SPY buy-and-hold": {
+          "total_return": 0.5641526116521816,
+          "cagr": 0.16802704660410828,
+          "max_drawdown": -0.1875522908467666,
+          "sharpe_monthly": 1.3208133970124722,
+          "sharpe_vs_shy": 1.0145117610263785
+        }
+      },
+      "rule_a_pass": false,
+      "rule_b_pass": false,
+      "diff_month_t_p": [
+        -0.0026764610597717294,
+        -2.3861120331107055,
+        0.017027562941021212
+      ]
+    }
+  }
+}

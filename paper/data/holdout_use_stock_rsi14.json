@@ -1,0 +1,8 @@
+{
+  "utc": "2026-11-21T13:04:10+00:00",
+  "who": "user request in chat",
+  "market": "stock",
+  "rule": "rsi14_oversold (long, h=10, fixed textbook params)",
+  "period_tested": "2025-01-01 onward",
+  "note": "ETF and crypto holdout NOT examined"
+}

@@ -1,0 +1,13 @@
+period 2025-01-02 -> 2026-11-19 rows 424966 assets 903
+STATS rsi14_oversold 2025+: firings 5073, dates 428, edge -13.4 bps, p 0.700, mean excess -15.7 bps, mean abs return 31.3 bps, hit 53.5%, insufficient False
+          rule  slots  leverage  trades  end_$_median  end_$_min  end_$_max  worst_drawdown_median
+rsi14_oversold      3         1     138         16.63      12.40      19.69                  -0.30
+rsi14_oversold      3         2     138         11.36       6.23      15.90                  -0.57
+rsi14_oversold     10         1     453         16.81      14.23      18.88                  -0.27
+rsi14_oversold     10         2     453         14.60      10.56      18.76                  -0.45
+       __all__      3         1     141         15.40      14.41      19.50                  -0.29
+       __all__      3         2     141         10.07       8.63      16.35                  -0.54
+       __all__     10         1     470         17.41      14.12      21.33                  -0.17
+       __all__     10         2     470         16.27      10.30      24.51                  -0.30
+SPY buy-and-hold same period: $20 -> $24.97, worst drawdown -18.8%
+avg trade return (net 0.10%) -30.1 bps over 138 trades; $0.01 sell fee on a ~$6.67 position = 15 bps

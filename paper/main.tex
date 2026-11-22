@@ -1,0 +1,467 @@
+\documentclass[11pt]{article}
+\usepackage[a4paper,margin=2.5cm]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{amsmath}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{array}
+\usepackage[authoryear,round]{natbib}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage[hidelinks]{hyperref}
+
+\lstset{basicstyle=\ttfamily\footnotesize,breaklines=true,frame=single,columns=fullflexible,
+  keywordstyle=\bfseries,language=Python,showstringspaces=false}
+\newcolumntype{L}{>{\raggedright\arraybackslash}X}
+
+\title{Backtests That Do Not Survive: An Out-of-Sample Test of 41 Swing Trading Signals, Five Original Strategies and Funding-Rate Carry in U.S. Stocks, ETFs and Crypto}
+
+\author{Telmen Nyamdelger\\[2pt]
+\small Independent researcher\\[6pt]
+\small with Claude (Anthropic), an AI model used as research engineer and reviewer\thanks{%
+The study was designed and run jointly by the human author and Claude. Claude wrote and reviewed
+the software and drafted the text under the author's direction; the author chose the research
+questions, approved every protocol before results were seen, and takes responsibility for the
+paper. See the contribution statement at the end.}}
+
+\date{November 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Retail traders are sold swing trading systems on the strength of attractive backtests. We built an
+open-source research pipeline that tries to give such systems a fair chance and an honest test.
+It covers 41 textbook technical signals with fixed parameters, pairs and triples of those signals,
+a walk-forward gradient boosting model, a formal validation gate, a capacity-limited portfolio
+backtest, five new strategies designed from patterns found in the data, a tactical trend rule and a
+crypto funding-rate carry trade. The data are 888 U.S. large and mid-cap stocks, 100 ETFs and 419
+Binance crypto assets including 63 delisted coins, with costs charged on every trade. Each test was
+written down before its result was seen, and the most recent data (2024 to 2026) were locked away
+and used once.
+No strategy passed. Several looked excellent in sample: one crypto strategy returned 1,028\% over
+2018 to 2021 and then lost 52\% over 2022 to 2023. The one signal that passed the 2018 to 2023
+check, buying U.S. stocks when RSI(14) falls below 30, did worse than random stocks from the same
+list and than the S\&P 500 ETF in 2025 to 2026. A trend rule cut drawdowns but earned less than
+simply holding the same ETFs, and the carry trade was smooth but earned less than cash in 2022 to
+2023. Simple buy-and-hold matched or beat every strategy we tested. We release all code and data so
+that others can check these results and test their own ideas the same way.
+\end{abstract}
+
+\noindent\textbf{Keywords:} technical analysis, backtest overfitting, out-of-sample testing,
+survivorship bias, multiple testing, cryptocurrency, retail trading
+
+\noindent\textbf{Disclaimer:} This paper is research and education. It is not investment advice.
+
+\section{Introduction}
+
+Many people believe they can make a living from short-term trading rules: buy when a stock is
+oversold, sell when a moving average crosses, follow a breakout. Courses, signal services and
+trading bots are marketed with backtests that show smooth, rising equity curves. The evidence on
+how retail traders actually do is far less flattering. \citet{barber2000trading} found that the
+households who traded most earned the least. In Taiwan, fewer than 1\% of day traders earned
+reliable positive returns after fees \citep{barber2014speculator}. In Brazil, 97\% of people who day
+traded equity futures for more than 300 days lost money \citep{chague2019daytrading}.
+
+Part of the gap between marketed backtests and real results is statistical. If enough rules or
+parameter settings are tried, some will look excellent by chance, and their out-of-sample returns
+can be negative \citep{bailey2014pseudo}. Finance research has the same problem at a larger scale:
+hundreds of published return predictors have not survived stricter testing
+\citep{harvey2016cross}. Survivorship bias adds to it. A stock universe built from today's index
+members leaves out every company that failed, which makes buying weakness look better than it was
+\citep{brown1992survivorship,elton1996survivor}.
+
+This paper reports a long, honest attempt to find a swing trading strategy that works. The project
+started as an attempt to build a profitable trading bot. It became a study of why backtests mislead
+when no strategy survived. We wanted the strategies to have every fair chance, so the pipeline
+covers single signals, combinations, machine learning, and strategies we designed ourselves from
+patterns in the data. We also wanted the test to be hard to fool, so every protocol and pass
+criterion was fixed in writing before its result was computed, and the newest data were held back
+for a single final test.
+
+Our contributions are three. First, we test 41 common swing signals across U.S. stocks, ETFs and
+crypto with date-clustered, overlap-aware statistics, multiple-testing control and costs on every
+trade, and we show how survivorship and regime dependence create false winners. Second, we take
+the most promising results through a pre-registered validation gate, a portfolio backtest and a
+one-time holdout, and show that none of them holds up. Third, we release the complete pipeline,
+data snapshots and logs, so that anyone can repeat the work or test a new idea with the same
+discipline. The project was carried out by a human researcher working with an AI model, and we
+describe how that collaboration was organised and checked.
+
+\section{Related literature}
+
+Early evidence that simple technical rules predicted stock index returns \citep{brock1992simple} did
+not survive a correction for data snooping across the universe of rules
+\citep{sullivan1999data,white2000reality}. \citet{lo2000foundations} formalised chart patterns and
+found some information in them, while the survey by \citet{park2007profitability} concluded that
+apparent profits shrank over time and were sensitive to data snooping and costs.
+Momentum is better documented: cross-sectional momentum in stocks \citep{jegadeesh1993returns} and
+time-series momentum across asset classes \citep{moskowitz2012time}, although momentum strategies
+suffer rare, severe crashes \citep{daniel2016momentum}. \citet{faber2007quantitative} proposed a
+10-month moving average rule for tactical asset allocation that mainly reduces drawdowns. In crypto,
+\citet{liu2021risks} find strong time-series momentum in coin returns, and \citet{he2022perpetual}
+show that perpetual futures trade away from spot and that the gap, which funding payments are meant
+to close, has narrowed over time.
+
+On method, we follow the literature on backtest overfitting
+\citep{bailey2014pseudo,bailey2014deflated,lopezdeprado2018advances}: limit the number of trials,
+fix parameters in advance, and keep untouched data for a final test. We use Newey--West standard
+errors for overlapping returns \citep{newey1987simple}, the Benjamini--Hochberg false discovery rate
+\citep{benjamini1995controlling}, gradient boosting \citep{ke2017lightgbm} and SHAP attributions
+\citep{lundberg2017unified}.
+
+\section{Data}
+
+\paragraph{U.S. stocks and ETFs.} Daily prices from Yahoo Finance, adjusted for splits and dividends,
+from January 2000. The stock universe is the current S\&P 500 and S\&P 400 membership, 888 single
+stocks after removing ETFs. Because it contains only today's survivors, we treat every stock result
+as suspect and label it so in all reports. A separate universe of 100 liquid ETFs (U.S. equity,
+factors, sectors and industries, international, bonds, commodities, currencies and real estate) has
+no constituent survivorship and serves as the primary equity result.
+
+\paragraph{Crypto.} Daily Binance spot data for every USDT pair ever listed (632 after removing
+stablecoins, fiat, wrapped, tokenized-equity and leveraged tokens), taken from the public archive
+so that delisted coins are included. Binance reuses tickers: \texttt{LUNAUSDT} was Terra LUNA
+until it collapsed in May 2022 and a different coin afterwards, and both sources return one joined
+series. We split any series with a gap longer than five days into separate assets, which affected
+seven tickers. Of the 419 assets with data before 2024, 63 were delisted; a delisted coin's open
+trades exit at its last close. An asset-day counts only if the coin ranks in the top 100 by
+trailing 30-day median dollar volume at that day's close, a point-in-time liquidity filter.
+
+\paragraph{Perpetual futures.} Binance USD-margined funding rates and daily perpetual prices for 469
+contracts from January 2020, including delisted contracts.
+
+\paragraph{Splits.} Table~\ref{tab:splits} shows the periods. Data from 1 January 2024 onward could
+be loaded only through a logged flag and only by a final-test script that refuses to run twice.
+Japanese (Nikkei 225) and European (DAX, CAC 40, FTSE 100) stocks were downloaded as a fresh test
+market but never inspected, because no stock strategy reached the stage that would use them.
+
+\begin{table}[h]
+\centering\small
+\caption{Sample periods.}\label{tab:splits}
+\begin{tabular}{lll}
+\toprule
+ & Stocks and ETFs & Crypto \\
+\midrule
+Discovery (development) & 2000 to 2017 & 2018 to 2021 (carry: 2020 to 2021) \\
+Validation & 2018 to 2023 & 2022 to 2023 \\
+Holdout (used once) & 2024 to Nov.\ 2026 & 2024 to Nov.\ 2026 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Method}
+
+\subsection{Signals and outcomes}
+Each signal is a pure function of prices up to the close of day $t$ and returns true or false.
+The 41 signals cover trend, pullback, breakout, mean reversion, momentum, divergence, volume,
+support and resistance, and candlestick families, all with textbook parameters (for example
+RSI(14) computed with Wilder smoothing, \citealp{wilder1978new}); Appendix~\ref{app:signals} lists
+them. A truncation test confirms that no signal changes when future data are removed. Trades enter
+at the open of day $t+1$. The main horizon is 10 trading days. Round-trip costs are 0.10\% for U.S.
+stocks and ETFs and 0.30\% for crypto. Excess return is the trade's return net of costs minus the
+benchmark's return over the same dates (SPY for stocks and ETFs, BTC for crypto). Returns are
+winsorised at the 0.1st and 99.9th percentiles of each split before any statistic.
+
+\subsection{Statistics}
+Signals fire on many assets on the same day, and 10-day returns overlap. We therefore average per
+date first and measure a signal's \emph{edge} as its same-day excess return minus the same-day
+average of all assets in the same universe. The mean edge is tested with a Newey--West regression
+on the date-sorted series with $2h$ lags and a $t$ distribution with conservative effective degrees
+of freedom, $\max(\lfloor n_{\text{dates}}/2h\rfloor-1,1)$. Simulations with dense and sparse firing
+patterns gave rejection rates of about 4 to 8\% at the nominal 5\% level. Benjamini--Hochberg
+$q$-values control the false discovery rate within each table. Rows with fewer than 100 occurrences
+or $\max(100,5h)$ distinct dates are marked insufficient and never ranked.
+
+A signal is a \emph{candidate} only if it is sufficient, $q<0.10$, its edge is positive, its mean
+excess return over the benchmark is positive, and its mean absolute return net of costs is
+positive. The last condition was added after a review found that short signals in crypto could beat
+BTC while losing money as plain shorts.
+
+\subsection{Combinations and machine learning}
+For every pair of same-direction signals we measure \emph{lift}: the edge of days when both fire
+minus the better of the two single-only edges, tested with a conservative two-sample HAC test.
+Triples are formed only from pairs with positive lift. A redundancy map flags signals that fire
+on the same rows. For machine learning, a LightGBM regressor with fixed hyperparameters predicts
+10-day excess returns from the signal matrix and regime labels. It is trained walk-forward by
+calendar year with an embargo of $h+1$ trading days, scored on the validation split, and explained
+with SHAP values.
+
+\subsection{Validation gate, portfolio test and holdout}
+Discovery candidates and synergistic pairs are re-tested on the validation split with the same
+rule. The portfolio test holds at most 10 positions of equal size for 10 trading days, enters at
+the next open, fills free slots in random order (five seeds) and books each trade's return net of
+costs. A same-universe random baseline (enter any eligible row with the same slots and seeds)
+measures what the universe alone would have earned, which is the fair comparison when the universe
+itself is biased.
+
+Every later experiment (the RSI test on 2025 to 2026, the trend rule, the five original strategies
+and the carry trade) was specified in a dated, committed document before results were computed,
+including the pass criteria. A holdout run writes a record file before loading any 2024 or later
+data, logs every access, and refuses to run a second time.
+
+\subsection{How the human and AI collaboration was organised}
+The human author set the goals and made every decision about scope, markets and when to use the
+holdout. Claude wrote the code in small tasks. Each task was implemented by one AI agent and
+checked by a separate, fresh AI reviewer against the written specification before the next task
+began, and each phase ended with a whole-code review. These reviews found real errors that would
+have changed the conclusions, among them a price filter that used future information (Yahoo's
+back-adjusted prices are lower in the past for stocks that later rose, so dropping sub-\$1 rows
+removed early Nvidia and Apple data), the LUNA ticker splice, a funding-payment timing error that
+favoured one carry strategy, and the short-signal issue above.
+
+\section{Results}
+
+\subsection{Single signals}
+Table~\ref{tab:solo} summarises the discovery results at the 10-day horizon. No signal had a
+significant edge in the 100-ETF universe. In crypto, trend and breakout signals were candidates and
+every dip-buying signal had a significantly negative edge. In U.S. stocks the pattern reversed: seven
+dip-buying signals were candidates and seven breakout and trend signals were significantly worse
+than average.
+
+\begin{table}[h]
+\centering\small
+\caption{Discovery results for 41 signals, 10-day horizon. Edge is in basis points per trade over the
+same-day universe average.}\label{tab:solo}
+\begin{tabularx}{\textwidth}{lccL}
+\toprule
+Universe & Candidates & Significantly negative & Strongest results (edge, $q$) \\
+\midrule
+ETFs (100) & 0 & 0 & none \\
+Crypto (419) & 5 & 6 & MA 20/50 cross up (+303, 0.056); Donchian 55 breakout (+286, 0.056);
+lower Bollinger close ($-$347, 0.0002) \\
+U.S. stocks (888, suspect) & 7 & 7 & RSI(14) oversold (+44, 0.002); stochastic oversold cross (+35,
+0.0007); Donchian 20 breakdown ($-$44, $<$0.001) \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+The stock candidates should be read against the universe's drift. Across all discovery rows, the
+stock universe beat SPY by 33.9 basis points per 10 days on average, which is mostly survivorship.
+The ETF universe, which does not have this problem, showed nothing.
+
+\subsection{Combinations and machine learning}
+Of 582 same-direction pairs per universe, none showed significant synergy in ETFs or crypto. In
+U.S. stocks two pairs showed synergy and five showed conflict, all with $q=0.0998$, just under the
+threshold. One of the two synergistic pairs (MACD bullish divergence with OBV leading price)
+later had a significantly \emph{negative} edge on validation ($-$91 basis points, $q=0.001$).
+
+Table~\ref{tab:ml} shows the walk-forward model. In ETFs it had no predictive power. In crypto only
+one walk-forward year could be scored, and its validation spread was zero. In stocks it had a small
+positive spread, and SHAP attributed most of it to down-trend and oversold features, the same
+pattern that survivorship inflates.
+
+\begin{table}[h]
+\centering\small
+\caption{Walk-forward LightGBM. IC is the mean daily rank correlation between prediction and
+outcome; spread is the top-decile excess return over the daily average, in basis points.}\label{tab:ml}
+\begin{tabular}{lrrrr}
+\toprule
+ & IC (walk-forward) & Spread (walk-forward) & IC (validation) & Spread (validation) \\
+\midrule
+ETFs & 0.007 ($p=0.42$) & $-$0.5 & 0.029 ($p=0.047$) & $-$1.5 \\
+Crypto & 0.029 ($p=0.053$) & 119 & 0.024 ($p=0.060$) & $-$2.4 \\
+U.S. stocks & 0.010 ($p=0.006$) & 11 & 0.010 ($p=0.12$) & 22 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Validation gate and portfolio test}
+None of the five crypto candidates passed validation: four had negative edges in 2022 to 2023. Of
+the seven stock candidates, only RSI(14) oversold passed (edge +47 basis points, $q=0.041$). As a
+portfolio over 2018 to 2023 it returned a median of 151\% across 15 runs (range 91\% to 251\%),
+against 84\% for the same-universe random baseline and 96\% for SPY. Its maximum drawdown was 47\%
+against 34\% for SPY, and its Sharpe ratio (0.72 in the example run) was no better than SPY's (0.71).
+Because the stock list is biased, it was not eligible for the holdout under our protocol.
+
+\subsection{Holdout and follow-up tests}
+
+\paragraph{RSI(14) oversold, 2025 to 2026.} At the author's request, the stock holdout was used once
+to test this signal unchanged on January 2025 to November 2026. It failed. Its edge over the same-day
+average was $-$13.4 basis points ($p=0.70$). As a 10-slot portfolio without per-trade minimum fees
+it returned a median of 6.5\%, against 11.2\% for random stocks from the same list and 24.9\% for
+SPY. We also simulated a \$20 paper account with fractional shares, a one-cent regulatory fee per
+sale and optional 2$\times$ leverage. Every configuration lost money (median end balance \$11 to
+\$17), the cent fee alone cost 15 to 50 basis points per trade, and leverage made every case worse.
+U.S. brokers also require \$2,000 for a margin account.
+
+\paragraph{Trend rule on ETFs.} We tested Faber's 10-month rule on five ETFs (SPY, EFA, IEF, VNQ,
+DBC, with SHY as cash), pass bar fixed in advance: positive return, Sharpe at least that of holding
+the same ETFs, and a smaller maximum drawdown. Table~\ref{tab:trend} shows that it passed in both
+earlier periods only because it cut drawdowns, and was not confirmed on the holdout, where it
+earned 22.6\% against 34.3\% for holding the same ETFs.
+
+\begin{table}[h]
+\centering\small
+\caption{Faber 10-month trend rule versus holding the same five ETFs.}\label{tab:trend}
+\begin{tabular}{lrrrrrr}
+\toprule
+ & \multicolumn{3}{c}{Trend rule} & \multicolumn{3}{c}{Hold same ETFs} \\
+\cmidrule(lr){2-4}\cmidrule(lr){5-7}
+Period & Return & Max DD & Sharpe & Return & Max DD & Sharpe \\
+\midrule
+2006 to 2017 & 61\% & $-$14\% & 0.67 & 60\% & $-$47\% & 0.40 \\
+2018 to 2023 & 28\% & $-$10\% & 0.64 & 43\% & $-$26\% & 0.52 \\
+2024 to 2026 (holdout) & 23\% & $-$6\% & 1.07 & 34\% & $-$11\% & 1.33 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Five original strategies.} We then designed five strategies from patterns seen in the
+earlier results and fixed their rules in advance: crypto momentum rotation with a BTC trend switch
+(C1), a crypto weakness hedge (C2), C1 gated by the Crypto Fear \& Greed Index (C3), dip buying
+inside uptrends (S1) and monthly stock momentum with a crash switch (S2). The final tests were
+reserved for crypto 2024 to 2026 and for the unused Japanese and European stocks.
+Table~\ref{tab:orig} shows that all five failed validation, so neither final test ran.
+
+\begin{table}[h]
+\centering\small
+\caption{Original strategies. Benchmarks: BTC buy-and-hold (C1, C3); absolute (C2); same-universe
+random entries (S1); equal-weight holding of the same stocks (S2).}\label{tab:orig}
+\begin{tabularx}{\textwidth}{lrrrL}
+\toprule
+ & \multicolumn{2}{c}{Total return} & & \\
+\cmidrule(lr){2-3}
+Strategy & Discovery & Validation & Val.\ Sharpe & Reason for failing validation \\
+\midrule
+C1 crypto momentum & 117\% & $-$8\% & 0.06 & Sharpe below BTC (0.19) \\
+C2 crypto weakness hedge & $-$16\% & 19\% & 0.46 & Sharpe below 0.5 \\
+C3 mood + momentum & 1,028\% & $-$52\% & $-$0.78 & Sharpe below BTC \\
+S1 dip in uptrend & 523\% & 37\% & 0.44 & Did not beat random entries \\
+S2 momentum + crash switch & 1,753\% & 135\% & 0.88 & Below equal-weight hold (196\%) \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+C3 is the clearest example of overfitting to one regime. Its only data-chosen setting, whether to
+buy when the index showed fear or greed, was picked on 2018 to 2021, a period dominated by one
+crypto boom. In 2022 to 2023 it bought the strongest coins during short bear-market rallies.
+
+\paragraph{Funding-rate carry.} The last test was a trade with an economic reason rather than a
+price forecast: hold a coin and short the same notional in its perpetual future, and collect the
+funding that leveraged longs pay. We tested a static BTC and ETH version (F1) and a weekly rotation
+into the five coins with the highest recent funding (F2). The pass bar was an annual return above
+4\%, a Sharpe ratio of at least 1.0 and a maximum drawdown under 15\%.
+
+\begin{table}[h]
+\centering\small
+\caption{Funding-rate carry, costs included.}\label{tab:carry}
+\begin{tabular}{llrrrr}
+\toprule
+Strategy & Period & Annual return & Sharpe & Max DD & Turnover per year \\
+\midrule
+F1 BTC+ETH & 2020 to 2021 & 15.6\% & 3.66 & $-$0.5\% & 5 \\
+F1 BTC+ETH & 2022 to 2023 & 2.5\% & 3.25 & $-$0.4\% & 4 \\
+F2 rotating & 2020 to 2021 & 20.5\% & 2.76 & $-$0.6\% & 72 \\
+F2 rotating & 2022 to 2023 & $-$5.5\% & $-$0.91 & $-$12.5\% & 76 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+F1 behaved as carry theory predicts, with almost no losses, but in the 2022 to 2023 bear market
+demand for leverage fell and it earned 2.5\% a year, less than short-term Treasury bills paid at the
+time. F2's turnover consumed its funding income. Both failed validation, so the crypto holdout is
+still unused.
+
+\section{Discussion}
+
+The results repeat a familiar lesson with unusual clarity. Results that look strong in sample are
+usually not real. C3 earned 1,028\% in development; the stock momentum strategy S2 earned 1,753\%.
+Neither survived the next period. The one stock signal that survived validation failed when it was
+finally tested on new data, and the universe it was tested in favoured it.
+
+Four mechanisms produced the false winners. Multiple testing: with 41 signals, 582 pairs per
+universe and several strategy families, some results clear any fixed bar by chance, which is why
+$q$-values and a held-out test matter. Survivorship: the stock universe beat SPY by 34 basis points
+per 10 days before any signal was applied, and every stock "edge" was a dip-buying signal, which
+is what survivorship rewards. Regime dependence: crypto breakouts and C3 worked in one boom and
+failed in the following bear market, in line with the crash risk of momentum
+\citep{daniel2016momentum}. Costs and frictions: turnover destroyed F2, and small accounts face
+minimum fees that exceed the edge of every signal we tested.
+
+For retail investors the practical message is simple. A backtest that was not tested on data it had
+never seen is close to worthless, and one built on today's index members is biased toward buying
+dips. Even honest, well-built strategies in our study did no better than holding a diversified
+index, which is what most research on active retail trading also finds
+\citep{barber2000trading,barber2014speculator,chague2019daytrading}.
+
+The AI collaboration made a study of this size possible for one person, but it did not make the
+study correct by itself. Several conclusions changed because a separate reviewer checked each piece
+of code against its written specification. We think the combination of written protocols,
+independent review and a locked holdout is what readers should look for in any AI-assisted
+financial research.
+
+\section{Limitations}
+
+The data are free and have known defects: the U.S. stock universe is survivorship-biased and Yahoo
+prices are back-adjusted. We used one main horizon (10 days) and textbook parameters only, so a
+tuned version of a signal could behave differently, although tuning would also raise the risk of
+overfitting. Costs are simplified (no taxes, no market impact, fixed per-trade costs). Some
+validation results were examined informally before the formal gate was written, and the stock and
+ETF holdouts were each opened once for the tests reported here; reproducing those numbers re-reads
+data that have already been seen. The crypto holdout and the Japanese and European data remain
+unused and are available for one future test.
+
+\section{Conclusion}
+
+We gave 41 common swing trading signals, their combinations, a machine learning model, five new
+strategies, a trend rule and a carry trade a fair and careful test on stocks, ETFs and crypto. None
+passed. Several earned remarkable returns in the data they were built on and failed afterwards.
+Simply holding the market matched or beat all of them. We hope the released pipeline helps traders
+check an idea honestly before they risk money on it.
+
+\section*{Data and code availability}
+All source code, tests, protocols and the result files used in the tables are public at
+\url{https://github.com/Temka921/tradingbot}. The \texttt{paper/data} folder holds the result
+tables, and the \texttt{docs/superpowers/specs} folder holds each dated pre-registered design.
+Prices can be re-downloaded with the included scripts.
+
+\section*{Author contributions and use of AI}
+Telmen Nyamdelger conceived the project, chose the research questions and markets, approved every
+design and pass criterion before results were computed, decided when the holdout data could be used,
+and is responsible for the paper. Claude (Anthropic) designed the statistical tests with the author,
+wrote and reviewed the software, ran the experiments and drafted the manuscript, which the author
+reviewed. Claude is not listed as an author because current publication policies do not allow AI
+systems to take authorship responsibility; its role is disclosed here in full.
+
+\bibliographystyle{plainnat}
+\bibliography{references}
+
+\appendix
+\section{Signals tested}\label{app:signals}
+\small
+Short signals are marked with an asterisk; all other signals are long.
+\begin{description}
+\item[Trend (11):] MA 20/50 cross up, MA 20/50 cross down*, MA 50/200 cross up, MA 50/200 cross
+down*, close crosses above MA 200, MACD cross up, MACD cross down*, ADX $>$ 25 with +DI above
+$-$DI, Supertrend flip up, Supertrend flip down*, Parabolic SAR flip up.
+\item[Pullback (4):] touch of the 20-day MA in an uptrend, RSI(14) between 40 and 50 in an uptrend,
+RSI(2) below 10 above the 200-day MA, Fibonacci 50 to 61.8\% retracement.
+\item[Breakout (6):] Donchian 20 breakout, Donchian 20 breakdown*, Donchian 55 breakout,
+Bollinger/Keltner squeeze release, breakout on 1.5$\times$ volume, 52-week high.
+\item[Mean reversion (7):] close below lower Bollinger band, close above upper band*, RSI(14) below
+30, RSI(14) above 70*, z-score(20) below $-$2, stochastic oversold cross, gap-down fill setup.
+\item[Momentum (2):] 12-1 month relative strength top decile, ROC(20) acceleration.
+\item[Divergence (2):] RSI bullish divergence, MACD bullish divergence.
+\item[Volume (3):] OBV new high before price, close above anchored VWAP from swing low,
+accumulation/distribution rising.
+\item[Support and resistance (2):] bounce off a prior swing low, pivot-point support hold.
+\item[Candlesticks (4):] bullish engulfing, hammer, inside-bar breakout, morning star.
+\end{description}
+
+\section{Selected source code}
+The full code is in the repository. The listings below are the core significance test and the
+validation gate's decision rule.
+
+\noindent\textbf{HAC test of a date-sorted series} (\texttt{src/swingbot/analysis/stats.py}):
+\lstinputlisting[firstline=46,lastline=74]{../src/swingbot/analysis/stats.py}
+
+\noindent\textbf{Same-day matched edge test} (\texttt{src/swingbot/analysis/stats.py}):
+\lstinputlisting[firstline=101,lastline=113]{../src/swingbot/analysis/stats.py}
+
+\noindent\textbf{Validation gate decision rule} (\texttt{src/swingbot/analysis/validation.py}):
+\lstinputlisting[firstline=30,lastline=44]{../src/swingbot/analysis/validation.py}
+
+\end{document}

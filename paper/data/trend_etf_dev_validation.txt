@@ -1,0 +1,20 @@
+
+=== discovery (2006-12-01 to 2017-12-31) ===
+                         total_return   cagr  max_drawdown  sharpe_monthly  sharpe_vs_shy
+Rule A: trend GTAA-5            0.613  0.044        -0.138           0.670          0.400
+Bench 1: hold GTAA-5            0.602  0.043        -0.470           0.401          0.254
+Rule B: trend all ETFs          0.996  0.064        -0.134           0.907          0.611
+Bench 1B: hold all ETFs         0.895  0.059        -0.498           0.480          0.332
+SPY buy-and-hold                1.402  0.082        -0.552           0.618          0.469
+Rule A vs Bench 1 monthly return difference: -0.04%/month, t -0.16, p 0.87 (information only)
+Rule A discovery: PASS | Rule B (secondary): pass
+
+=== validation (2018-01-01 to 2023-12-31) ===
+                         total_return   cagr  max_drawdown  sharpe_monthly  sharpe_vs_shy
+Rule A: trend GTAA-5            0.283  0.043        -0.101           0.640          0.430
+Bench 1: hold GTAA-5            0.430  0.062        -0.262           0.522          0.417
+Rule B: trend all ETFs          0.201  0.031        -0.147           0.414          0.203
+Bench 1B: hold all ETFs         0.485  0.068        -0.328           0.489          0.384
+SPY buy-and-hold                0.955  0.119        -0.337           0.713          0.608
+Rule A vs Bench 1 monthly return difference: -0.21%/month, t -0.83, p 0.41 (information only)
+Rule A validation: PASS | Rule B (secondary): fail

@@ -1,0 +1,12 @@
+{
+  "c3_mode": "confirming",
+  "discovery_sharpes": {
+    "contrarian": -0.7078418667567469,
+    "confirming": 1.020581611958965
+  },
+  "discovery_period": [
+    "2018-02-01",
+    "2021-12-31"
+  ],
+  "utc": "2026-11-22T03:27:46+00:00"
+}

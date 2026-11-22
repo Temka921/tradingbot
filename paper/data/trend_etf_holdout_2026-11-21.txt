@@ -1,0 +1,13 @@
+holdout data check: last date 2026-11-19 | NaN counts {'SPY': 0, 'EFA': 0, 'IEF': 0, 'VNQ': 0, 'DBC': 0, 'SHY': 0}
+
+=== holdout (2024-01-01 to 2026-11-19) ===
+                         total_return   cagr  max_drawdown  sharpe_monthly  sharpe_vs_shy
+Rule A: trend GTAA-5            0.226  0.073        -0.062           1.072          0.687
+Bench 1: hold GTAA-5            0.343  0.108        -0.105           1.334          1.009
+Rule B: trend all ETFs          0.346  0.109        -0.066           1.289          1.021
+Bench 1B: hold all ETFs         0.437  0.134        -0.133           1.318          1.095
+SPY buy-and-hold                0.564  0.168        -0.188           1.321          1.015
+Rule A vs Bench 1 monthly return difference: -0.27%/month, t -2.39, p 0.02 (information only)
+Rule A holdout: not confirmed | Rule B (secondary): fail
+
+results saved to C:\Users\Temka\Desktop\tradingbot\data\holdout_use_etf_trend.json

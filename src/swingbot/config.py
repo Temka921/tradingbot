@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 
 COSTS: dict[str, float] = {"stock": 0.0010, "crypto": 0.0030, "japan": 0.0020, "europe": 0.0020}
-HOLDOUT_MARKETS: set[str] = {"stock", "crypto"}  # only these markets have a locked 2024+ holdout
+HOLDOUT_MARKETS: set[str] = {"stock", "crypto", "perp"}  # only these markets have a locked 2024+ holdout
 HOME_INDEX: dict[str, str] = {"japan": "^N225", ".DE": "^GDAXI", ".PA": "^FCHI", ".L": "^FTSE", "us": "^GSPC"}
 HORIZONS: tuple[int, ...] = (5, 10, 20)
 

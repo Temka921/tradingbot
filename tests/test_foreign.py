@@ -34,7 +34,7 @@ def dirs(tmp_path, monkeypatch):
 
 def test_config_values():
     assert config.COSTS["japan"] == 0.0020 and config.COSTS["europe"] == 0.0020
-    assert config.HOLDOUT_MARKETS == {"stock", "crypto"}
+    assert config.HOLDOUT_MARKETS == {"stock", "crypto", "perp"}
     assert config.HOME_INDEX == {"japan": "^N225", ".DE": "^GDAXI", ".PA": "^FCHI", ".L": "^FTSE", "us": "^GSPC"}
 
 

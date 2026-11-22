@@ -87,16 +87,15 @@ def _list_archive(prefix: str, delimiter: str | None, tag: str, child: str) -> l
             return out
 
 
-def list_archive_symbols(quote: str = "USDT") -> list[str]:
-    """Every spot symbol in the Binance public archive (live and delisted) ending in `quote`."""
-    prefixes = _list_archive(ARCHIVE_SPOT_PREFIX, "/", "CommonPrefixes", "Prefix")
-    syms = {p[len(ARCHIVE_SPOT_PREFIX):].strip("/") for p in prefixes}
+def list_archive_symbols(quote: str = "USDT", prefix: str = ARCHIVE_SPOT_PREFIX) -> list[str]:
+    """Every symbol under an archive `prefix` (default spot klines; live and delisted) ending in `quote`."""
+    prefixes = _list_archive(prefix, "/", "CommonPrefixes", "Prefix")
+    syms = {p[len(prefix):].strip("/") for p in prefixes}
     return sorted(s for s in syms if s.endswith(quote))
 
 
-def fetch_binance_archive(symbol: str, start: str = "2017-01-01") -> pd.DataFrame:
-    """Daily bars from the monthly archive zips (works for delisted pairs)."""
-    prefix = f"{ARCHIVE_SPOT_PREFIX}{symbol}/1d/"
+def archive_frames(prefix: str) -> list[pd.DataFrame]:
+    """Raw headerless frames (every column, as read) from each monthly zip under `prefix`, oldest first."""
     keys = [k for k in _list_archive(prefix, None, "Contents", "Key") if k.endswith(".zip")]
     frames = []
     for key in sorted(keys):
@@ -105,24 +104,37 @@ def fetch_binance_archive(symbol: str, start: str = "2017-01-01") -> pd.DataFram
         with zipfile.ZipFile(io.BytesIO(resp.content)) as z:
             for name in z.namelist():
                 with z.open(name) as f:
-                    df = pd.read_csv(f, header=None, usecols=range(6))
-                frames.append(df)
-    frames = [f for f in frames if not f.empty]
-    if not frames:
-        return _empty_bars()
-    df = pd.concat(frames, ignore_index=True)
+                    frames.append(pd.read_csv(f, header=None))
+    return [f for f in frames if not f.empty]
+
+
+def epoch_to_ms(t: pd.Series) -> pd.Series:
+    """Integer epoch values in ms or microseconds (2025+ archives) -> ms."""
+    t = t.astype("int64")
+    return t.where(t <= 10**14, t // 1000)
+
+
+def bars_from_klines(df: pd.DataFrame, start: str = "2017-01-01") -> pd.DataFrame:
+    """Frame whose first 6 columns are open_time,o,h,l,c,v (header rows allowed) -> bars schema."""
+    df = df.iloc[:, :6].copy()
     df.columns = ["open_time"] + COLUMNS
     df = df.apply(pd.to_numeric, errors="coerce")  # a header row becomes NaN and is dropped
     df = df.dropna(subset=["open_time"])
     if df.empty:
         return _empty_bars()
-    t = df["open_time"].astype("int64")
-    t = t.where(t <= 10**14, t // 1000)  # microseconds (2025+) -> ms
-    idx = pd.to_datetime(t, unit="ms").dt.normalize()
+    idx = pd.to_datetime(epoch_to_ms(df["open_time"]), unit="ms").dt.normalize()
     out = df[COLUMNS].astype(float)
     out.index = pd.DatetimeIndex(idx, name="date")
     out = out[~out.index.duplicated(keep="last")].sort_index()
     return out[out.index >= pd.Timestamp(start)]
+
+
+def fetch_binance_archive(symbol: str, start: str = "2017-01-01", prefix: str = ARCHIVE_SPOT_PREFIX) -> pd.DataFrame:
+    """Daily bars from the monthly archive zips (works for delisted pairs)."""
+    frames = archive_frames(f"{prefix}{symbol}/1d/")
+    if not frames:
+        return _empty_bars()
+    return bars_from_klines(pd.concat(frames, ignore_index=True).iloc[:, :6], start)
 
 
 def fetch_crypto(symbol: str) -> pd.DataFrame:

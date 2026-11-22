@@ -66,6 +66,10 @@ REPORT_COLS = ["market", "strategy", "period", "start", "end", "n_days", "total_
 
 # ---------------------------------------------------------------- inputs
 
+S1_START_NOTE = ("S1 periods start on the first date on which any stock and its home index both have "
+                 "200 bars (universe-level warm-up), not on the first date S1 actually fires.")
+
+
 def crypto_inputs(panel: pd.DataFrame, allow_holdout: bool
                   ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """(opens, closes, eligible) for the panel's assets.
@@ -578,7 +582,8 @@ def run_dev(reports_dir: Path, stamp: str | None = None) -> tuple[pd.DataFrame, 
     header = [f"Original strategies: dev and validation ({stamp})",
               f"C3 direction (chosen on discovery only): {choice['c3_mode']} "
               f"(discovery Sharpes {choice.get('discovery_sharpes')})",
-              "Validation gate: " + ", ".join(f"{k}={'PASS' if v else 'fail'}" for k, v in gate.items())]
+              "Validation gate: " + ", ".join(f"{k}={'PASS' if v else 'fail'}" for k, v in gate.items()),
+              S1_START_NOTE]
     print(_write(df, reports_dir, f"originals_dev_{stamp}", header))
     return df, gate
 
@@ -783,6 +788,7 @@ def run_final(reports_dir: Path, stamp: str | None = None) -> pd.DataFrame:
     header = [f"Original strategies: final tests ({stamp})",
               "Run (passed validation): " + (", ".join(passed) or "none"),
               "Not run (failed validation): " + (", ".join(skipped) or "none"),
+              S1_START_NOTE,
               "Five strategies were tested; a single pass could be luck. "
               "Stock passes are weaker evidence (today's index members: survivorship bias)."]
     print(_write(df, reports_dir, f"originals_final_{stamp}", header))

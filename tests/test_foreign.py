@@ -52,33 +52,42 @@ def test_holdout_scope(dirs):
     assert len(lines) == 1 and "stock/AAPL" in lines[0]
 
 
+def _jp_html(n, extra=()):
+    hdr = "<tr><th>証券コード</th><th>銘柄</th><th>備考</th></tr>"
+    half = n // 2
+    def tbl(codes):
+        return "<table>" + hdr + "".join(f"<tr><td>{c}</td><td>X</td><td></td></tr>" for c in codes) + "</table>"
+    codes = [str(1000 + i) for i in range(n)]
+    return ("<table><tr><th>Foo</th></tr><tr><td>x</td></tr></table>"
+            + tbl(list(extra) + codes[:half]) + tbl(codes[half:] + codes[:3]))  # 3 cross-table dupes
+
+
 def test_japan_universe_parse(dirs, monkeypatch):
-    html = ("<table><tr><th>Foo</th></tr><tr><td>x</td></tr></table>"
-            "<table><tr><th>Code</th><th>Company</th></tr>"
-            "<tr><td>7203</td><td>Toyota</td></tr>"
-            "<tr><td>986</td><td>Short Code Co</td></tr></table>")
+    html = _jp_html(220, extra=["285A", "99", "12345"])
     monkeypatch.setattr(foreign.requests, "get", lambda url, **k: R(html))
     out = foreign.japan_universe()
     assert list(out.columns) == ["symbol", "market", "home_index"]
-    assert out["symbol"].tolist() == ["7203.T", "0986.T"]
+    assert len(out) == 221 and out["symbol"].is_unique
+    assert out["symbol"].iloc[0] == "285A.T" and "1000.T" in set(out["symbol"])
+    assert "99.T" not in set(out["symbol"]) and "12345.T" not in set(out["symbol"])
     assert set(out["market"]) == {"japan"} and set(out["home_index"]) == {"^N225"}
     assert (universe.UNIVERSE_DIR / "japan.csv").exists()
     monkeypatch.setattr(foreign.requests, "get", lambda *a, **k: pytest.fail("network"))
     pd.testing.assert_frame_equal(foreign.japan_universe(), out)
 
 
-def test_japan_table_missing_raises(dirs, monkeypatch):
-    monkeypatch.setattr(foreign.requests, "get", lambda url, **k: R("<table><tr><th>A</th></tr><tr><td>1</td></tr></table>"))
+def test_japan_count_sanity_raises(dirs, monkeypatch):
+    monkeypatch.setattr(foreign.requests, "get", lambda url, **k: R(_jp_html(50)))
     with pytest.raises(ValueError, match="wikipedia"):
         foreign.japan_universe()
 
 
 def test_europe_universe_parse(dirs, monkeypatch):
     dax = ("<table><tr><th>Company</th><th>Ticker</th></tr>"
-           "<tr><td>Siemens</td><td>SIE.DE</td></tr><tr><td>SAP SE</td><td>SAP</td></tr>"
+           "<tr><td>Siemens</td><td>SIE.DE</td></tr><tr><td>Airbus</td><td>AIR.PA</td></tr><tr><td>SAP SE</td><td>SAP</td></tr>"
            "<tr><td>Shared Co</td><td>SHD</td></tr></table>")
     cac = ("<table><tr><th>Company</th><th>Ticker</th></tr>"
-           "<tr><td>LVMH</td><td>MC</td></tr>"
+           "<tr><td>LVMH</td><td>MC</td></tr><tr><td>ArcelorMittal</td><td>MT.AS</td></tr>"
            "<tr><td>Shared Co.</td><td>SHC</td></tr></table>")
     ftse = ("<table><tr><th>Company</th><th>EPIC</th></tr>"
             "<tr><td>BT Group</td><td>BT.A</td></tr><tr><td>Shell</td><td>SHEL</td></tr><tr><td>BP plc</td><td>BP.</td></tr></table>")
@@ -88,8 +97,8 @@ def test_europe_universe_parse(dirs, monkeypatch):
 
     monkeypatch.setattr(foreign.requests, "get", get)
     out = foreign.europe_universe()
-    assert out["symbol"].tolist() == ["SIE.DE", "SAP.DE", "SHD.DE", "MC.PA", "BT-A.L", "SHEL.L", "BP.L"]
-    assert out["home_index"].tolist() == ["^GDAXI"] * 3 + ["^FCHI", "^FTSE", "^FTSE", "^FTSE"]
+    assert out["symbol"].tolist() == ["SIE.DE", "AIR.PA", "SAP.DE", "SHD.DE", "MC.PA", "MT.AS", "BT-A.L", "SHEL.L", "BP.L"]
+    assert out["home_index"].tolist() == ["^GDAXI"] * 4 + ["^FCHI", "^FCHI", "^FTSE", "^FTSE", "^FTSE"]
     assert set(out["market"]) == {"europe"}
     assert (universe.UNIVERSE_DIR / "europe.csv").exists()
 
@@ -118,6 +127,22 @@ def test_glitch_filter_two_day_spike():
     df["close"] = close
     out = foreign.glitch_filter(df)
     assert out["close"].tolist() == [100.0] * 7
+
+
+def test_glitch_filter_three_day_spike_unchanged():
+    close = [100.0, 100.0, 300.0, 300.0, 300.0, 100.0, 100.0, 100.0]
+    df = _bars("2020-01-01", "2020-01-10").iloc[:8].copy()
+    df["close"] = close
+    assert foreign.glitch_filter(df)["close"].tolist() == close
+
+
+def test_glitch_filter_keeps_unrelated_nan():
+    df = _bars("2020-01-01", "2020-01-10").iloc[:8].copy()
+    df["close"] = [100.0, 100.0, 100.0, 300.0, 100.0, 100.0, 100.0, 100.0]
+    df.iloc[6, df.columns.get_loc("high")] = float("nan")
+    out = foreign.glitch_filter(df)
+    assert out["close"].iloc[3] == 100.0
+    assert pd.isna(out["high"].iloc[6]) and out["high"].notna().sum() == 7
 
 
 def test_fetch_fng(monkeypatch):

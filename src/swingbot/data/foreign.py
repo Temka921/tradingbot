@@ -11,7 +11,9 @@ from swingbot.data import download, store, universe
 from swingbot.data.universe import UA, AssetMeta
 from swingbot.data.yahoo import fetch_yahoo
 
-NIKKEI_URL = "https://en.wikipedia.org/wiki/Nikkei_225"
+NIKKEI_URL = "https://ja.wikipedia.org/wiki/%E6%97%A5%E7%B5%8C%E5%B9%B3%E5%9D%87%E6%A0%AA%E4%BE%A1"
+JP_CODE_COL = "証券コード"  # 証券コード
+JP_MIN, JP_MAX = 200, 260
 DAX_URL = "https://en.wikipedia.org/wiki/DAX"
 CAC_URL = "https://en.wikipedia.org/wiki/CAC_40"
 FTSE_URL = "https://en.wikipedia.org/wiki/FTSE_100_Index"
@@ -54,25 +56,43 @@ def _norm_name(name: str) -> str:
     return re.sub(r"\s+", " ", n).strip()
 
 
+_EXCH_SUFFIX = re.compile(r"\.[A-Z]{1,3}$")
+
+
 def _suffix(code: str, suffix: str) -> str:
-    code = code.upper()
-    if suffix == ".T":
-        digits = re.sub(r"\D", "", code.split(".")[0])
-        return digits.zfill(4) + ".T"
-    if code.endswith(suffix):
-        code = code[: -len(suffix)]
+    """Yahoo symbol for a list ticker. DAX/CAC tickers already carrying an exchange suffix
+    (AIR.PA, MT.AS) are kept; FTSE EPICs get '.L' with internal dots turned into '-'."""
+    code = code.upper().strip()
     if suffix == ".L":
-        code = code.rstrip(".").replace(".", "-")
+        return code.rstrip(".").replace(".", "-") + ".L"
+    if _EXCH_SUFFIX.search(code):
+        return code
     return code + suffix
+
+
+def _jp_codes(text: str) -> list[str]:
+    codes: list[str] = []
+    for t in pd.read_html(io.StringIO(text)):
+        if JP_CODE_COL not in t.columns:
+            continue
+        for c in t[JP_CODE_COL].dropna().astype(str).str.strip():
+            c = re.sub(r"\.0$", "", c).upper()
+            if len(c) == 4 and c.isalnum() and c.isascii() and c[:3].isdigit():
+                codes.append(c)
+    return list(dict.fromkeys(codes))
 
 
 def japan_universe() -> pd.DataFrame:
     cache = universe.UNIVERSE_DIR / "japan.csv"
     if cache.exists():
         return pd.read_csv(cache, keep_default_na=False)
-    t = _constituents(NIKKEI_URL)
-    syms = list(dict.fromkeys(_suffix(c, ".T") for c in t["code"]))
-    df = pd.DataFrame({"symbol": syms, "market": "japan", "home_index": config.HOME_INDEX["japan"]})
+    resp = requests.get(NIKKEI_URL, headers=UA, timeout=30)
+    resp.raise_for_status()
+    codes = _jp_codes(resp.text)
+    if not JP_MIN <= len(codes) <= JP_MAX:
+        raise ValueError(f"expected {JP_MIN}-{JP_MAX} Nikkei codes at {NIKKEI_URL}, found {len(codes)}")
+    df = pd.DataFrame({"symbol": [f"{c}.T" for c in codes], "market": "japan",
+                       "home_index": config.HOME_INDEX["japan"]})
     cache.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(cache, index=False)
     return df
@@ -142,7 +162,8 @@ def _glitch_rows(close) -> list[int]:
 def glitch_filter(df: pd.DataFrame) -> pd.DataFrame:
     """Remove data glitches: |close/prev - 1| > 0.60 and a reversal of more than half the move
     within the next 2 bars. Glitch OHLC values are replaced by the previous (cleaned) bar's values;
-    detection repeats (max 3 passes) so multi-day spikes are fully cleaned. Returns a copy."""
+    detection repeats (max 3 passes), which cleans spikes lasting up to 2 days. Longer spikes
+    (3+ days) are left unchanged. Pre-existing NaNs elsewhere are untouched. Returns a copy."""
     out = df.copy()
     cols = [out.columns.get_loc(c) for c in ("open", "high", "low", "close") if c in out.columns]
     for _ in range(3):

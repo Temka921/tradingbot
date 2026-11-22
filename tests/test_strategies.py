@@ -5,7 +5,7 @@ import pytest
 
 from swingbot import indicators as ind
 from swingbot.backtest.rebalance import run_weights
-from swingbot.strategies import crypto, stocks
+from swingbot.strategies import crypto, own_series_change, stocks
 
 COST = 0.0015
 
@@ -330,7 +330,8 @@ def test_s2_no_lookahead_and_sums():
     pd.testing.assert_frame_equal(full.loc[common], part.loc[common])
     np.testing.assert_allclose(full.sum(axis=1), 1.0)
     held = (full.drop(columns="CASH") > 0).sum(axis=1)
-    assert (held[full["CASH"] < 1] >= 5).all()
+    assert (held[full["CASH"] == 0] >= 5).all() and (held <= 6).all()
+    assert ((full["CASH"] > 0) & (full["CASH"] < 1)).any()  # some slots switched to cash
 
 
 def test_s2_monthly_union_calendar():
@@ -353,11 +354,8 @@ def test_s2_min_valid_cash():
 
 
 def test_s2_momentum_ranking_and_count():
-    d = pd.bdate_range("2005-01-03", periods=320)
-    k = 60
-    rates = np.linspace(-0.001, 0.002, k)
-    closes = pd.DataFrame(10 * np.cumprod(1 + np.tile(rates, (len(d), 1)), axis=0), index=d,
-                          columns=[f"S{j:02d}" for j in range(k)])
+    closes = _ramp()
+    d = closes.index
     regime = pd.DataFrame(True, index=d, columns=closes.columns)
     w = stocks.s2_weights(closes, regime)
     last = w.iloc[-1]
@@ -366,21 +364,87 @@ def test_s2_momentum_ranking_and_count():
     np.testing.assert_allclose(held, 1 / 6)
 
 
-def test_s2_home_regime_per_stock():
-    d = pd.bdate_range("2005-01-03", periods=320)
-    k = 60
+def _ramp(n=320, k=60, start="2005-01-03"):
+    d = pd.bdate_range(start, periods=n)
     rates = np.linspace(-0.001, 0.002, k)
-    closes = pd.DataFrame(10 * np.cumprod(1 + np.tile(rates, (len(d), 1)), axis=0), index=d,
-                          columns=[f"S{j:02d}" for j in range(k)])
+    return pd.DataFrame(10 * np.cumprod(1 + np.tile(rates, (len(d), 1)), axis=0), index=d,
+                        columns=[f"S{j:02d}" for j in range(k)])
+
+
+def test_s2_home_regime_per_stock():
+    closes = _ramp()
+    d = closes.index
     regime = pd.DataFrame(True, index=d, columns=closes.columns)
     regime[["S59", "S58"]] = False  # their home index is below its SMA
     last = stocks.s2_weights(closes, regime).iloc[-1]
     assert last["S59"] == 0 and last["S58"] == 0
-    held = last[last > 0].drop("CASH", errors="ignore")
-    assert set(held.index) == {f"S{j:02d}" for j in range(52, 58)}
+    held = last[last > 0].drop("CASH")
+    # top 6 are S54..S59; the two switched-off slots go to cash, nobody is promoted
+    assert set(held.index) == {f"S{j:02d}" for j in range(54, 58)}
+    np.testing.assert_allclose(held, 1 / 6)
+    assert last["CASH"] == pytest.approx(2 / 6)
     # every home index off -> all cash
     off = pd.DataFrame(False, index=d, columns=closes.columns)
     assert stocks.s2_weights(closes, off)["CASH"].eq(1.0).all()
+
+
+def test_s2_two_home_indices_crash_switch():
+    closes = _ramp()
+    d = closes.index
+    home = {c: ("^GDAXI" if int(c[1:]) % 2 else "^FTSE") for c in closes.columns}
+    up = pd.Series(np.linspace(100, 200, len(d) + 300), index=pd.bdate_range("2003-11-24", periods=len(d) + 300))
+    down = pd.Series(np.linspace(200, 100, len(up)), index=up.index)
+    regime = stocks.home_regime_frame(closes, {"^FTSE": up, "^GDAXI": down}, home)
+    last = stocks.s2_weights(closes, regime).iloc[-1]
+    top6 = [f"S{j:02d}" for j in range(54, 60)]
+    even = [c for c in top6 if home[c] == "^FTSE"]
+    assert set(last[last > 0].drop("CASH").index) == set(even)  # odd (DAX-off) slots not refilled
+    np.testing.assert_allclose(last[even], 1 / 6)
+    assert last["CASH"] == pytest.approx(3 / 6)
+
+
+def test_s2_month_end_holiday_keeps_group_ranked():
+    closes = _ramp(330)
+    ends = closes.index.to_series().groupby(closes.index.to_period("M")).max()
+    t = ends.iloc[-2]  # a complete month end with 252+ bars
+    group = [f"S{j:02d}" for j in range(30, 60)]  # includes the top momentum stocks
+    holiday = closes.copy()
+    holiday.loc[t, group] = np.nan  # local holiday on the union month end
+    regime = pd.DataFrame(True, index=closes.index, columns=closes.columns)
+    w_hol = stocks.s2_weights(holiday, regime).loc[t]
+    assert w_hol["CASH"] == 0
+    assert set(w_hol[w_hol > 0].index) == {f"S{j:02d}" for j in range(54, 60)}
+    ew = stocks.equal_weight_hold(holiday, min_valid=50).loc[t]
+    assert (ew.drop("CASH") > 0).sum() == 60
+
+
+def test_own_series_change_staleness_limit():
+    closes = _ramp(330, k=3)
+    closes.iloc[-7:, 0] = np.nan  # S00 stops trading 7 bars before the end
+    v = own_series_change(closes, 21, 252)
+    assert v["S00"].iloc[-7:-2].notna().all()  # 1..5 bars stale: last own value carried
+    assert v["S00"].iloc[-7] == v["S00"].iloc[-8]
+    assert v["S00"].iloc[-2:].isna().all()  # more than 5 bars stale: missing
+    assert v["S01"].iloc[-1] == pytest.approx(closes["S01"].iloc[-22] / closes["S01"].iloc[-253] - 1)
+
+
+def test_s2_stale_stock_drops_out():
+    closes = _ramp(330)
+    ends = closes.index.to_series().groupby(closes.index.to_period("M")).max()
+    t = ends.iloc[-2]
+    i = closes.index.get_loc(t)
+    closes.iloc[i - 6:i + 1, closes.columns.get_loc("S59")] = np.nan  # no bar for 7 bars
+    regime = pd.DataFrame(True, index=closes.index, columns=closes.columns)
+    row = stocks.s2_weights(closes, regime).loc[t]
+    assert row["S59"] == 0
+    assert set(row[row > 0].index) == {f"S{j:02d}" for j in range(54, 59)}  # 59 valid -> k = 5
+
+
+def test_run_weights_rows_must_sum_to_one():
+    d = pd.date_range("2020-01-01", periods=4, freq="D")
+    px = pd.DataFrame({"A": [10.0] * 4}, index=d)
+    with pytest.raises(ValueError):
+        run_weights(px, px, pd.DataFrame({"A": [0.5], "CASH": [0.4]}, index=[d[0]]), COST)
 
 
 def test_home_regime_frame_ffills_index():

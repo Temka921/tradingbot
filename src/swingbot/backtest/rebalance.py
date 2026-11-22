@@ -1,9 +1,10 @@
 """General target-weight rebalance engine (longs, shorts, free cash, short funding).
 
-Timing: a weight row dated at a signal close is traded at the next bar's open. Between trades
-holdings drift with prices. Missing prices are forward-filled: a position whose asset has no bar
-(e.g. a delisted coin) is carried at its last close and, at the next rebalance, traded at that
-price. Cash columns have a constant price of 1.0 and no trading cost.
+Timing: a weight row dated at a signal close is traded at the next bar of ``closes.index``
+(the union calendar) at its open. Between trades holdings drift with prices. Missing prices are
+forward-filled (design rule): a position whose asset has no bar (a delisted coin, or a stock on
+a local holiday) is carried at its last close, and a rebalance on such a day trades it at that
+stale last price. Cash columns have a constant price of 1.0 and no trading cost.
 """
 from __future__ import annotations
 
@@ -26,10 +27,17 @@ def run_weights(opens: pd.DataFrame, closes: pd.DataFrame, weights: pd.DataFrame
     - Negative weights are shorts; a short loses when its price rises (holdings drift).
     - Turnover cost ``cost_per_side`` per unit of value traded, on non-cash columns only.
     - Funding: every close, ``short_funding_annual / 365 * |current short notional|`` is paid.
-    - ``equity.attrs`` (scalars only): ``worst_short_loss`` = largest price rise of any single
-      short position between the rebalance that opened it and the next one (or the last close),
-      as a fraction (positive = loss for the short); NaN if no short was ever held.
+    - ``equity.attrs`` (scalars only): ``worst_short_loss`` = the worst price move of any short
+      within one holding window between consecutive rebalances (entry open to the next
+      rebalance open, or the last close; reset at each rebalance even if the short is kept), as
+      a fraction (positive = loss for the short); NaN if no short was ever held.
+    - Every weight row must sum to 1 (within 1e-9), cash included; otherwise ValueError.
     """
+    sums = weights.fillna(0.0).sum(axis=1)
+    bad = (sums - 1.0).abs() > 1e-9
+    if bad.any():
+        raise ValueError(f"weight rows must sum to 1; first bad row {sums.index[bad][0]}: "
+                         f"{sums[bad].iloc[0]!r}")
     cols = list(weights.columns)
     cash = np.array([c in set(cash_cols) for c in cols])
     days = closes.index

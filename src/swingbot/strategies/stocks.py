@@ -60,10 +60,12 @@ def s2_weights(closes: pd.DataFrame, home_regime: pd.DataFrame, min_valid: int =
                top_frac: float = 0.10, min_top: int = 5) -> pd.DataFrame:
     """Monthly (union-calendar month-end) target weights.
 
-    With n stocks holding a valid 12-1 momentum value (n < ``min_valid`` → 100% CASH), the slot
-    count is k = max(min_top, floor(top_frac × n)). The k best-ranked stocks among those that are
-    valid **and** whose own home index is above its 200-day SMA get 1/k each; unfilled slots
-    go to CASH.
+    Momentum is taken as of each stock's last own bar (holiday-safe, staleness limit in
+    ``own_series_change``). With n stocks holding a valid 12-1 value (n < ``min_valid`` → 100%
+    CASH), the k = max(min_top, floor(top_frac × n)) best-ranked valid stocks are selected,
+    regardless of regime. Each selected stock gets 1/k, except that a stock whose own home index
+    is not above its 200-day SMA (crash switch) has its slot moved to CASH; lower-ranked stocks
+    are not promoted.
     """
     mom = _momentum(closes)
     reg = home_regime.reindex(index=mom.index, columns=closes.columns).fillna(False).astype(bool)
@@ -74,7 +76,8 @@ def s2_weights(closes: pd.DataFrame, home_regime: pd.DataFrame, min_valid: int =
             w.loc[d, CASH] = 1.0
             continue
         k = max(min_top, int(np.floor(top_frac * len(m) + 1e-9)))
-        picks = m[reg.loc[d, m.index]].sort_values(ascending=False, kind="mergesort").index[:k]
+        top = m.sort_values(ascending=False, kind="mergesort").index[:k]
+        picks = top[reg.loc[d, top].to_numpy(bool)]
         w.loc[d, picks] = 1.0 / k
         w.loc[d, CASH] = 1.0 - len(picks) / k
     return w

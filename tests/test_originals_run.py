@@ -245,6 +245,8 @@ def test_final_runs_only_strategies_that_passed(tmp_path, monkeypatch):
     reports = tmp_path / "reports"
     reports.mkdir()
     seen = {}
+    monkeypatch.setattr(run, "crypto_preflight", lambda s, r: [])
+    monkeypatch.setattr(run, "stock_preflight", lambda: [])
     monkeypatch.setattr(run, "crypto_final", lambda s, r: seen.setdefault("crypto", list(s)) and [])
     monkeypatch.setattr(run, "stock_final", lambda s: seen.setdefault("stock", list(s)) and [])
     (reports / "originals_gate.json").write_text(json.dumps(
@@ -257,6 +259,19 @@ def test_final_runs_only_strategies_that_passed(tmp_path, monkeypatch):
     run.run_final(reports, stamp="t2")
     assert seen == {}
     assert (reports / "originals_final_t2.txt").exists()
+
+
+def test_final_preflight_stops_before_crypto_when_stock_data_missing(tmp_path, monkeypatch):
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    (reports / "originals_gate.json").write_text(json.dumps(
+        {"C1": True, "C2": False, "C3": False, "S1": True, "S2": False}))
+    monkeypatch.setattr(run, "crypto_preflight", lambda s, r: [])
+    monkeypatch.setattr(run, "stock_preflight", lambda: ["japan"])
+    monkeypatch.setattr(run, "crypto_final", lambda s, r: pytest.fail("crypto final must not start"))
+    monkeypatch.setattr(run, "stock_final", lambda s: pytest.fail("stock final must not start"))
+    with pytest.raises(SystemExit, match="japan"):
+        run.run_final(reports, stamp="x")
 
 
 def test_final_without_gate_refuses(tmp_path):
@@ -293,9 +308,11 @@ def test_crypto_final_writes_record_before_build_and_refuses_second_run(tmp_data
     assert {r["strategy"] for r in rows} == {"C1", "C2"}
     assert all(r["verdict"] in ("confirmed", "not confirmed") for r in rows)
     assert all(pd.Timestamp(r["start"]) >= pd.Timestamp("2024-01-01") for r in rows)
-    with pytest.raises(SystemExit):
-        run.crypto_final(["C1"], reports)
+    again = run.crypto_final(["C1"], reports)  # refused, not an exit: stocks can still run
     assert len(calls) == 1
+    assert again[0]["strategy"] == "C1" and "refused" in again[0]["reason"]
+    assert again[0]["verdict"] == rows[[r["strategy"] for r in rows].index("C1")]["verdict"]
+    assert json.loads(record.read_text()) == rec  # record unchanged
 
 
 def test_crypto_final_preflight_missing_files_leaves_no_record(tmp_data, tmp_path, monkeypatch):
@@ -319,7 +336,19 @@ def test_crypto_final_error_is_saved_into_record(tmp_data, tmp_path, monkeypatch
     assert rows and rows[0]["verdict"] == "not confirmed" and "error" in rows[0]["reason"]
 
 
-def test_stock_final_verdicts_per_market(monkeypatch):
+def test_crypto_final_interrupt_is_recorded_and_reraised(tmp_data, tmp_path, monkeypatch):
+    reports, calls, record = _crypto_final_env(tmp_data, tmp_path, monkeypatch)
+
+    def interrupt(*a, **k):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(run, "build_panel", interrupt)
+    with pytest.raises(KeyboardInterrupt):
+        run.crypto_final(["C1"], reports)
+    assert "interrupted" in json.loads(record.read_text())["error"]
+
+
+def test_stock_final_verdicts_per_market(tmp_data, monkeypatch):
     idx = pd.bdate_range("2005-01-03", periods=10)
 
     def fake_inputs(market):
@@ -335,17 +364,83 @@ def test_stock_final_verdicts_per_market(monkeypatch):
                 "reason": "", "start": idx[0], "end": idx[-1]}
 
     monkeypatch.setattr(run, "stock_final_market", fake_eval_market)
+    record = tmp_data / run.STOCK_RECORD_NAME
+    loads = []
+    real_inputs = run.foreign_inputs
+
+    def counting(market):
+        assert record.exists()  # record written before the first foreign load
+        loads.append(market)
+        return real_inputs(market)
+
+    monkeypatch.setattr(run, "foreign_inputs", counting)
     rows = run.stock_final(["S1", "S2"])
     v = {(r["strategy"], r["market"]): r["verdict"] for r in rows}
     assert v[("S1", "japan")] == v[("S1", "europe")] == "mixed"
     assert v[("S2", "japan")] == "confirmed"
+    rec = json.loads(record.read_text())
+    assert rec["strategies"] == ["S1", "S2"] and rec["markets"] == list(run.FINAL_MARKETS)
+    assert len(rec["results"]) == 4 and "error" not in rec
+    assert loads == list(run.FINAL_MARKETS)
+
+    again = run.stock_final(["S1"])
+    assert loads == list(run.FINAL_MARKETS)  # foreign_inputs not called again
+    assert "refused" in again[0]["reason"] and again[0]["verdict"] == "mixed"
+    assert json.loads(record.read_text()) == rec
 
 
-def test_stock_final_skips_when_a_market_is_missing(monkeypatch):
+def test_stock_final_error_saved_into_record(tmp_data, monkeypatch):
+    monkeypatch.setattr(run, "_foreign_ready", lambda m: True)
+
+    def boom(market):
+        raise RuntimeError("bad parquet")
+
+    monkeypatch.setattr(run, "foreign_inputs", boom)
+    rows = run.stock_final(["S2"])
+    rec = json.loads((tmp_data / run.STOCK_RECORD_NAME).read_text())
+    assert "bad parquet" in rec["error"]
+    assert rows[0]["verdict"] == "not confirmed" and "error" in rows[0]["reason"]
+
+
+def test_stock_final_missing_market_exits_without_record(tmp_data, monkeypatch):
     monkeypatch.setattr(run, "_foreign_ready", lambda m: m == "europe")
     monkeypatch.setattr(run, "foreign_inputs", lambda m: pytest.fail("must not load any market"))
-    rows = run.stock_final(["S1"])
-    assert rows and rows[0]["verdict"] == "not run" and "japan" in rows[0]["reason"]
+    with pytest.raises(SystemExit, match="japan"):
+        run.stock_final(["S1"])
+    assert not (tmp_data / run.STOCK_RECORD_NAME).exists()
+
+
+def test_clip_by_period_uses_each_periods_own_rows():
+    rng = np.random.default_rng(0)
+    d = pd.date_range("2016-01-01", "2019-12-31", freq="D")
+    v = rng.normal(0, 0.01, len(d))
+    late = d >= pd.Timestamp("2018-01-01")
+    v[late] *= 10  # validation rows are far more volatile
+    periods = [("2000-01-01", "2017-12-31"), ("2018-01-01", "2023-12-31")]
+    out = run.clip_by_period(v, d, periods)
+    lo_e, hi_e = np.percentile(v[~late], (0.1, 99.9))
+    lo_l, hi_l = np.percentile(v[late], (0.1, 99.9))
+    assert out[~late].min() == pytest.approx(lo_e) and out[~late].max() == pytest.approx(hi_e)
+    assert out[late].min() == pytest.approx(lo_l) and out[late].max() == pytest.approx(hi_l)
+    pooled = run.clip_by_period(v, d, None)
+    assert pooled.max() == pytest.approx(np.percentile(v, 99.9))
+
+
+def test_stock_dev_clips_s1_per_period_finals_pooled(monkeypatch):
+    seen = []
+    real = run.s1_run
+
+    def spy(*a, clip_periods=None, **k):
+        seen.append(clip_periods)
+        return real(*a, clip_periods=clip_periods, **k)
+
+    monkeypatch.setattr(run, "s1_run", spy)
+    idx = pd.bdate_range("2016-01-01", "2019-06-28", name="date")
+    bars = {f"S{i}": _bars(idx, 100 + i) for i in range(55)}
+    ic = {"^GSPC": _bars(idx, 7)["close"]}
+    run.stock_dev(bars, ic, {s: "^GSPC" for s in bars})
+    run.stock_final_market("S1", "japan", (bars, ic, {s: "^GSPC" for s in bars}))
+    assert seen == [[run.PERIODS["stock"]["discovery"], run.PERIODS["stock"]["validation"]], None]
 
 
 # ---------------------------------------------------------------- stock runs (synthetic)

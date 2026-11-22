@@ -54,6 +54,7 @@ S1_HORIZON = 10
 S1_SLOTS = 10
 S2_MIN_VALID = 50
 RECORD_NAME = "holdout_use_crypto_originals.json"
+STOCK_RECORD_NAME = "final_use_stocks_originals.json"
 CHOICE_NAME = "originals_c3_choice.json"
 GATE_NAME = "originals_gate.json"
 NAN = float("nan")
@@ -230,17 +231,46 @@ def _s1_valid(bars, index_close, home, calendar: pd.DatetimeIndex) -> pd.Datetim
     return calendar[calendar >= min(starts)]
 
 
-def s1_run(bars, index_close, home, cost: float
+def clip_by_period(values: np.ndarray, dates, periods=None) -> np.ndarray:
+    """Clip ``values`` at pooled 0.1/99.9 percentiles, separately per period.
+
+    ``periods``: list of (start, end) date bounds (``None`` = open). Rows in each period are
+    clipped with bounds from that period's rows only; rows in no period form one more group.
+    ``None`` or empty: one pooled clip over all rows.
+    """
+    v = np.asarray(values, dtype=float).copy()
+    if not periods:
+        return clip_values(v, clip_bounds(v))
+    d = pd.DatetimeIndex(dates)
+    rest = np.ones(len(v), dtype=bool)
+    groups = []
+    for p0, p1 in periods:
+        m = np.ones(len(v), dtype=bool)
+        if p0 is not None:
+            m &= d >= pd.Timestamp(p0)
+        if p1 is not None:
+            m &= d <= pd.Timestamp(p1)
+        m &= rest
+        rest &= ~m
+        groups.append(m)
+    groups.append(rest)
+    for m in groups:
+        if m.any():
+            v[m] = clip_values(v[m], clip_bounds(v[m]))
+    return v
+
+
+def s1_run(bars, index_close, home, cost: float, clip_periods=None
            ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DatetimeIndex]:
     """S1 and its ``__all__`` random baseline: realized-P&L equity per seed (columns SEEDS).
 
     One continuous run over all dates; trade returns are net of ``cost`` (round trip) and clipped
-    at the pooled 0.1/99.9 percentiles of every row of the run (same bounds for the baseline).
+    at the 0.1/99.9 percentiles (``clip_by_period``: per period in dev, one pooled clip in the
+    finals). Strategy and baseline use the same clipped returns.
     """
     frame = ss.s1_frame(bars, index_close, home, cost, horizon=S1_HORIZON)
     col = f"ret_long_{S1_HORIZON}"
-    v = frame[col].to_numpy(dtype=float)
-    frame[col] = clip_values(v, clip_bounds(v))
+    frame[col] = clip_by_period(frame[col].to_numpy(dtype=float), frame["date"], clip_periods)
     frame["asset"] = frame["asset"].astype("category")
     frame["split"] = pd.Categorical(["all"] * len(frame))
 
@@ -475,7 +505,8 @@ def stock_dev(bars, index_close, home, market: str = "stock") -> tuple[list[dict
     """Discovery and validation rows for S1 and S2 on US data and the stock part of the gate."""
     cost = config.COSTS[market]
     rows, gate = [], {}
-    eq, base, valid = s1_run(bars, index_close, home, cost)
+    clip_periods = [PERIODS["stock"][k] for k in ("discovery", "validation")]
+    eq, base, valid = s1_run(bars, index_close, home, cost, clip_periods=clip_periods)
     for label in ("discovery", "validation"):
         r = evaluate("S1", eq, PERIODS["stock"][label], {"baseline": base, "home": index_close},
                      valid_dates=valid)
@@ -569,30 +600,73 @@ def _jsonable(row: dict) -> dict:
     return out
 
 
-def crypto_final(strategies: list[str], reports_dir: Path) -> list[dict]:
-    """The one-time crypto 2024+ holdout run for ``strategies`` (all passed validation).
-
-    Pre-flight checks the required files, refuses if the record exists, writes the record,
-    then builds the panel with ``allow_holdout=True`` (every load logged). Results, or the
-    error, are saved into the record.
-    """
-    record = config.DATA_DIR / RECORD_NAME
+def crypto_preflight(strategies: list[str], reports_dir: Path) -> list[str]:
+    """Required files for the crypto final that are missing (empty list = ready)."""
     need = [config.DATA_DIR / "universe_meta.parquet", store._path(BTC, "crypto")]
     if "C3" in strategies:
         need += [_fng_file(), reports_dir / CHOICE_NAME]
-    missing = [str(p) for p in need if not p.exists()]
+    return [str(p) for p in need if not p.exists()]
+
+
+def _refused_rows(market: str, strategies, record: Path) -> list[dict]:
+    """Rows for an already-spent final: the recorded results if present, else a refusal."""
+    try:
+        rec = json.loads(record.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        rec = {}
+    old = {r.get("strategy"): r for r in rec.get("results", []) if isinstance(r, dict)}
+    rows = []
+    for s in strategies:
+        r = dict(old.get(s, {"market": market, "strategy": s, "period": "final", "pass": False,
+                             "verdict": "not run"}))
+        r["reason"] = (f"refused: already used ({rec.get('utc', 'unknown date')}); "
+                       f"recorded result shown" if s in old else
+                       f"refused: already used ({rec.get('utc', 'unknown date')})")
+        rows.append(r)
+    return rows
+
+
+def _spend(record: Path, payload: dict, body, error_rows) -> list[dict]:
+    """Write ``record`` (exclusive create), run ``body()`` -> (rows, extra payload), then save the
+    results or the error into the record. An interrupt (BaseException) is recorded and re-raised."""
+    record.parent.mkdir(parents=True, exist_ok=True)
+    with open(record, "x", encoding="utf-8") as fh:  # exclusive: never overwrite a record
+        json.dump(payload, fh, indent=2)
+    rows = None
+    try:
+        rows, extra = body()
+        payload.update(extra, results=[_jsonable(r) for r in rows])
+    except Exception as exc:  # noqa: BLE001 - the final is spent: always leave a record
+        payload["error"] = f"{type(exc).__name__}: {exc}"
+        rows = error_rows(payload["error"])
+    except BaseException as exc:
+        payload["error"] = f"interrupted: {type(exc).__name__}: {exc}"
+        raise
+    finally:
+        record.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
+    return rows
+
+
+def crypto_final(strategies: list[str], reports_dir: Path) -> list[dict]:
+    """The one-time crypto 2024+ holdout run for ``strategies`` (all passed validation).
+
+    Missing files: SystemExit before anything is spent. Record already present: returns
+    "refused" rows (with the recorded results) and loads nothing. Otherwise writes the record,
+    builds the panel with ``allow_holdout=True`` (every load logged) and saves the results, or
+    the error, into the record.
+    """
+    record = config.DATA_DIR / RECORD_NAME
+    missing = crypto_preflight(strategies, reports_dir)
     if missing:
         raise SystemExit(f"missing files, crypto holdout NOT used: {missing}")
     if record.exists():
-        raise SystemExit(f"crypto originals holdout already used: {record.read_text(encoding='utf-8')}")
+        return _refused_rows("crypto", strategies, record)
     mode = (str(json.loads((reports_dir / CHOICE_NAME).read_text(encoding="utf-8"))["c3_mode"])
             if "C3" in strategies else None)
     payload = {"utc": _now(), "who": "scripts/originals.py --final",
                "strategies": list(strategies), "c3_mode": mode}
-    record.parent.mkdir(parents=True, exist_ok=True)
-    with open(record, "x", encoding="utf-8") as fh:  # exclusive: never overwrite a record
-        json.dump(payload, fh, indent=2)
-    try:
+
+    def body():
         panel = build_panel("crypto", allow_holdout=True)
         panel = panel[["date", "asset", "eligible"]].copy()
         gc.collect()
@@ -609,13 +683,13 @@ def crypto_final(strategies: list[str], reports_dir: Path) -> list[dict]:
             if s == "C3":
                 r["c3_mode"] = mode
             rows.append(r)
-        payload.update(end_date=f"{closes.index[-1]:%Y-%m-%d}", results=[_jsonable(r) for r in rows])
-    except Exception as exc:  # noqa: BLE001 - the holdout is spent: always leave a record
-        payload["error"] = f"{type(exc).__name__}: {exc}"
-        rows = [{"market": "crypto", "strategy": s, "period": "final", "pass": False,
-                 "verdict": "not confirmed", "reason": f"error: {payload['error']}"} for s in strategies]
-    record.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
-    return rows
+        return rows, {"end_date": f"{closes.index[-1]:%Y-%m-%d}"}
+
+    def error_rows(err):
+        return [{"market": "crypto", "strategy": s, "period": "final", "pass": False,
+                 "verdict": "not confirmed", "reason": f"error: {err}"} for s in strategies]
+
+    return _spend(record, payload, body, error_rows)
 
 
 def stock_final_market(strategy: str, market: str, inputs) -> dict:
@@ -636,29 +710,49 @@ def stock_final_market(strategy: str, market: str, inputs) -> dict:
     return r
 
 
-def stock_final(strategies: list[str]) -> list[dict]:
-    """Japan and Europe final tests for ``strategies`` with per-strategy verdicts.
+def stock_preflight() -> list[str]:
+    """Final-test markets without data (empty list = ready)."""
+    return [m for m in FINAL_MARKETS if not _foreign_ready(m)]
 
-    Runs only if both markets have data; otherwise nothing foreign is loaded.
+
+def stock_final(strategies: list[str]) -> list[dict]:
+    """The one-time Japan and Europe final tests for ``strategies`` with per-strategy verdicts.
+
+    Missing market data: SystemExit, nothing loaded. Record ``STOCK_RECORD_NAME`` already present:
+    "refused" rows, nothing loaded. Otherwise the record is written before the first foreign load
+    and the results, or the error, are saved into it.
     """
-    missing = [m for m in FINAL_MARKETS if not _foreign_ready(m)]
+    missing = stock_preflight()
     if missing:
+        raise SystemExit(f"data missing for {missing}: stock finals NOT run, no foreign data loaded")
+    record = config.DATA_DIR / STOCK_RECORD_NAME
+    if record.exists():
+        return _refused_rows("+".join(FINAL_MARKETS), strategies, record)
+    payload = {"utc": _now(), "who": "scripts/originals.py --final",
+               "strategies": list(strategies), "markets": list(FINAL_MARKETS)}
+
+    def body():
+        rows, passes, ends = [], {s: {} for s in strategies}, {}
+        for m in FINAL_MARKETS:
+            inputs = foreign_inputs(m)
+            for s in strategies:
+                r = stock_final_market(s, m, inputs)
+                r.update(market=m, period="final")
+                rows.append(r)
+                passes[s][m] = bool(r["pass"])
+                if r.get("end") is not None:
+                    ends[m] = f"{pd.Timestamp(r['end']):%Y-%m-%d}"
+            del inputs
+            gc.collect()
+        for r in rows:
+            r["verdict"] = stock_verdict(passes[r["strategy"]])
+        return rows, {"end_dates": ends}
+
+    def error_rows(err):
         return [{"market": "+".join(FINAL_MARKETS), "strategy": s, "period": "final", "pass": False,
-                 "verdict": "not run",
-                 "reason": f"data missing for {missing}; no foreign data was loaded"} for s in strategies]
-    rows, passes = [], {s: {} for s in strategies}
-    for m in FINAL_MARKETS:
-        inputs = foreign_inputs(m)
-        for s in strategies:
-            r = stock_final_market(s, m, inputs)
-            r.update(market=m, period="final")
-            rows.append(r)
-            passes[s][m] = bool(r["pass"])
-        del inputs
-        gc.collect()
-    for r in rows:
-        r["verdict"] = stock_verdict(passes[r["strategy"]])
-    return rows
+                 "verdict": "not confirmed", "reason": f"error: {err}"} for s in strategies]
+
+    return _spend(record, payload, body, error_rows)
 
 
 def run_final(reports_dir: Path, stamp: str | None = None) -> pd.DataFrame:
@@ -672,6 +766,14 @@ def run_final(reports_dir: Path, stamp: str | None = None) -> pd.DataFrame:
     rows: list[dict] = []
     crypto_s = [s for s in CRYPTO if s in passed]
     stock_s = [s for s in STOCKS if s in passed]
+    # Pre-flight everything before any final is spent.
+    problems = []
+    if crypto_s:
+        problems += crypto_preflight(crypto_s, reports_dir)
+    if stock_s:
+        problems += [f"{m} market data" for m in stock_preflight()]
+    if problems:
+        raise SystemExit(f"missing inputs, no final test run: {problems}")
     if crypto_s:
         rows += crypto_final(crypto_s, reports_dir)
     if stock_s:

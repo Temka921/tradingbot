@@ -51,11 +51,18 @@ def _tidy_funding(df: pd.DataFrame) -> pd.DataFrame:
     return df.reset_index(drop=True)
 
 
+def _delisted(resp) -> bool:
+    """Binance answers 400 (invalid symbol) for delisted contracts; treat that as end of data."""
+    return getattr(resp, "status_code", 200) == 400
+
+
 def _funding_api(symbol: str, start_ms: int) -> pd.DataFrame:
     rows: list[dict] = []
     while True:
         resp = requests.get(f"{FAPI_URL}/fapi/v1/fundingRate",
                             params={"symbol": symbol, "startTime": start_ms, "limit": API_LIMIT}, timeout=30)
+        if _delisted(resp):  # contract no longer on the live API: the archive already holds its history
+            break
         resp.raise_for_status()
         page = resp.json()
         rows.extend(page)
@@ -90,6 +97,8 @@ def _klines_api(symbol: str, start_ms: int) -> pd.DataFrame:
         resp = requests.get(f"{FAPI_URL}/fapi/v1/klines",
                             params={"symbol": symbol, "interval": "1d", "startTime": start_ms,
                                     "limit": KLINES_API_LIMIT}, timeout=30)
+        if _delisted(resp):  # contract no longer on the live API: the archive already holds its history
+            break
         resp.raise_for_status()
         page = resp.json()
         rows.extend(page)

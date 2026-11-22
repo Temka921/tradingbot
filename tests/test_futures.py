@@ -198,3 +198,15 @@ def test_futures_universe_uses_crypto_bases(monkeypatch):
     monkeypatch.setattr(futures, "crypto_universe", lambda: [
         type("A", (), {"symbol": s})() for s in ["BTCUSDT", "ETHUSDT", "XYZUSDT"]])
     assert futures.futures_universe() == ["BTCUSDT", "ETHUSDT", "XYZUSDT"]
+
+
+def test_api_400_means_delisted_and_keeps_archive(monkeypatch):
+    class R:
+        status_code = 400
+        def raise_for_status(self):
+            raise AssertionError("must not raise for a delisted symbol")
+        def json(self):
+            return []
+    monkeypatch.setattr(futures.requests, "get", lambda *a, **k: R())
+    assert futures._funding_api("DEADUSDT", 0).empty
+    assert futures._klines_api("DEADUSDT", 0).empty
